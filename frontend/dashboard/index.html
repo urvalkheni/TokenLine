@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TokenLine Dashboard</title>
+  <!-- Google Fonts for custom typography -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,700;1,700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- App Shell Container -->
+  <div class="app-container">
+    
+    <!-- Left Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <h1 class="logo">TokenLine</h1>
+      </div>
+      <nav class="nav-menu">
+        <button class="nav-item active" data-tab="dashboard">
+          <span class="icon">📊</span> Dashboard
+        </button>
+        <button class="nav-item" data-tab="timeline">
+          <span class="icon">📈</span> Token Timeline
+        </button>
+        <button class="nav-item" data-tab="alerts">
+          <span class="icon">🚨</span> Security Alerts
+        </button>
+        <button class="nav-item" data-tab="settings">
+          <span class="icon">⚙️</span> Settings
+        </button>
+      </nav>
+      <div class="sidebar-footer">
+        <span class="version">v0.1.0 (Phase 1)</span>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      
+      <!-- Top Bar -->
+      <header class="top-bar">
+        <div class="search-container">
+          <span class="search-icon">🔍</span>
+          <input type="text" id="token-search" placeholder="Search by Token ID or Hash..." autocomplete="off">
+        </div>
+        <div class="top-bar-right">
+          <div class="status-indicator">
+            <span class="status-dot healthy"></span> Collector Connected
+          </div>
+        </div>
+      </header>
+
+      <!-- View Containers -->
+      <div class="view-container">
+
+        <!-- 1. Dashboard View -->
+        <section id="view-dashboard" class="tab-view active">
+          <div class="view-header">
+            <h2>System Overview</h2>
+            <p>Real-time lifecycle activity and threat telemetry.</p>
+          </div>
+
+          <!-- Summary Cards Grid -->
+          <div class="cards-grid">
+            <div class="card">
+              <h3>Active Tokens</h3>
+              <div class="metric healthy" id="metric-active">0</div>
+              <span class="card-desc">Healthy active sessions</span>
+            </div>
+            <div class="card">
+              <h3>Alerts Today</h3>
+              <div class="metric danger" id="metric-alerts">0</div>
+              <span class="card-desc">Suspicious actions flagged</span>
+            </div>
+            <div class="card">
+              <h3>Revoked Today</h3>
+              <div class="metric warning" id="metric-revoked">0</div>
+              <span class="card-desc">Sessions terminated</span>
+            </div>
+            <div class="card">
+              <h3>Sessions Tracked</h3>
+              <div class="metric primary" id="metric-sessions">0</div>
+              <span class="card-desc">Unique token families</span>
+            </div>
+          </div>
+
+          <!-- Event Log and Activity Feed -->
+          <div class="activity-section">
+            <div class="section-title-bar">
+              <h3>Recent Ingested Events</h3>
+              <span class="badge" id="live-indicator">LIVE</span>
+            </div>
+            <div class="feed-table-container">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Event Type</th>
+                    <th>Time</th>
+                    <th>User ID</th>
+                    <th>Token ID (Hashed)</th>
+                    <th>IP Hash</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody id="dashboard-event-feed">
+                  <!-- JS inserts rows here -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- 2. Token Timeline View -->
+        <section id="view-timeline" class="tab-view">
+          <div class="view-header">
+            <h2>Token Lifecycle Timeline</h2>
+            <p>Reconstruct and inspect parent-child refresh-token rotation chains.</p>
+          </div>
+
+          <div class="timeline-layout">
+            
+            <!-- Left Panel: Timeline nodes -->
+            <div class="timeline-panel card">
+              <div class="timeline-search-banner">
+                <h3>Token Chain: <span id="current-chain-id">None Selected</span></h3>
+              </div>
+              <div class="timeline-vertical" id="timeline-flow-container">
+                <!-- JS inserts vertical timeline nodes here -->
+              </div>
+            </div>
+
+            <!-- Right Panel: Token Family tree metadata -->
+            <div class="metadata-panel">
+              <div class="card family-card">
+                <h3>Token Family Linkage</h3>
+                <div class="family-tree-visual" id="family-tree-nodes">
+                  <!-- JS renders parent->child visualization -->
+                </div>
+              </div>
+              <div class="card details-card">
+                <h3>Event Context Details</h3>
+                <div id="timeline-detail-content">
+                  <p class="placeholder-text">Click any event node on the timeline to inspect metadata, device headers, and geo-evidence.</p>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </section>
+
+        <!-- 3. Alerts View -->
+        <section id="view-alerts" class="tab-view">
+          <div class="view-header">
+            <h2>Security Alerts</h2>
+            <p>Investigate and resolve anomalies, expired-use, and replay violations.</p>
+          </div>
+
+          <!-- Filters Row -->
+          <div class="filters-row card">
+            <div class="filter-group">
+              <label for="filter-severity">Severity:</label>
+              <select id="filter-severity">
+                <option value="all">All Severities</option>
+                <option value="critical">Critical</option>
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+              </select>
+            </div>
+            <div class="filter-group">
+              <label for="filter-type">Detection Type:</label>
+              <select id="filter-type">
+                <option value="all">All Types</option>
+                <option value="refresh_reuse_detected">Refresh Token Reuse</option>
+                <option value="replay_detected">Replay Attack</option>
+                <option value="token_expired">Expired Token Use</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Alerts list -->
+          <div class="alerts-section card">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Severity</th>
+                  <th>Detection Type</th>
+                  <th>Token ID</th>
+                  <th>Timestamp</th>
+                  <th>Status</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="alerts-table-body">
+                <!-- JS inserts rows -->
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- 4. Settings View -->
+        <section id="view-settings" class="tab-view">
+          <div class="view-header">
+            <h2>Collector Settings</h2>
+            <p>Configure API integrations, clean thresholds, and privacy keys.</p>
+          </div>
+          <div class="card settings-card">
+            <h3>REST API Integration</h3>
+            <p class="settings-desc">TokenLine is currently in mock mode. You can link this UI shell to your running Python Event Collector service by providing the API endpoint below.</p>
+            <div class="form-group">
+              <label for="setting-api-url">Event Collector URL</label>
+              <input type="text" id="setting-api-url" value="http://localhost:5000" disabled>
+            </div>
+            <div class="form-group">
+              <label for="setting-db-driver">Active Database</label>
+              <input type="text" id="setting-db-driver" value="SQLite (tokenline.db)" disabled>
+            </div>
+            <div class="form-group">
+              <span class="badge offline">Read-Only Scaffolding</span>
+            </div>
+          </div>
+        </section>
+
+      </div>
+    </main>
+
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
