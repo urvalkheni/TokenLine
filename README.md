@@ -472,6 +472,57 @@ For JWT, use [RFC 7519](https://www.rfc-editor.org/rfc/rfc7519). For OAuth, use 
 
 Do not rely on random blogs when authoritative documentation is available.
 
+## Running and Testing the Event Collector
+
+The backend Event Collector service is a Python Flask API that validates incoming security/authentication lifecycle events against the JSON Schema at `schema/event.schema.json` and stores valid records in SQLite.
+
+### Prerequisites
+
+Ensure you have Python 3.12+ installed. Install the dependencies:
+```bash
+pip install Flask jsonschema pytest requests
+```
+
+### Running the Collector Service
+
+To start the local Event Collector server:
+```bash
+python backend/collector/app.py
+```
+This runs the server on `http://127.0.0.1:5000` by default.
+
+### Submitting Synthetic Datasets
+
+To submit Khushi's synthetic datasets to the running collector:
+```bash
+python scripts/submit_dataset.py
+```
+
+### Running Unit Tests
+
+To run the automated test suite:
+```bash
+pytest tests/unit/test_collector.py
+```
+
+### Switching to Neon (PostgreSQL)
+
+To switch the collector's storage from the default local SQLite database to a hosted Neon PostgreSQL database:
+
+1. Copy `.env.example` to a new file named `.env` in the repository root:
+   ```bash
+   cp .env.example .env
+   ```
+2. Get your connection string from the Neon project dashboard (under Connection Details).
+3. Uncomment and set the `DATABASE_URL` variable in `.env`:
+   ```env
+   DATABASE_URL=postgresql://<user>:<password>@<neon-host>/<db>?sslmode=require
+   ```
+4. Restart the collector service. No code changes are required.
+
+> [!NOTE]
+> Neon free-tier databases automatically "sleep" after a period of inactivity. The first request after the database wakes up may experience a brief delay/hang while the connection is established. This is expected behavior and not a-bug.
+
 ## Resources
 
 ### Standards and security guidance
