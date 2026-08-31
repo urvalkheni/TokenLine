@@ -43,8 +43,11 @@ def contains_raw_credentials(data):
             return True
     return False
 
-@app.route("/events", methods=["POST"])
+@app.route("/events", methods=["POST", "OPTIONS"])
 def ingest_event():
+    if request.method == "OPTIONS":
+        return jsonify({}), 200
+
     if not event_schema:
         return jsonify({"error": "Schema not loaded on server"}), 500
 
@@ -93,6 +96,45 @@ def ingest_event():
         }), 500
 
     return jsonify({"status": "event persisted"}), 201
+
+@app.route("/events", methods=["GET", "OPTIONS"])
+def get_events():
+    if request.method == "OPTIONS":
+        return jsonify({}), 200
+    
+    from db import Event
+    db_sess = get_session()
+    try:
+        events = db_sess.query(Event).order_by(Event.time.desc()).limit(100).all()
+        result = []
+        for e in events:
+            result.append({
+                "event_id": e.event_id,
+                "event_type": e.event_type,
+                "time": e.time,
+                "user_id": e.user_id,
+                "token_hash": e.token_hash,
+                "token_family": e.token_family,
+                "parent_token_hash": e.parent_token_hash,
+                "ip_hash": e.ip_hash,
+                "country": e.country,
+                "device_id": e.device_id,
+                "user_agent_family": e.user_agent_family,
+                "endpoint": e.endpoint,
+                "result": e.result
+            })
+        return jsonify(result), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        db_sess.close()
+
+@app.after_request
+def add_cors_headers(response):
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    return response
 
 if __name__ == "__main__":
     init_db()
