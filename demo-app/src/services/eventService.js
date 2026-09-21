@@ -13,11 +13,18 @@ function emit(eventName, payload) {
     ...payload,
   };
   
-  if (eventLog.rawRefreshToken || eventLog.rawAccessToken || eventLog.password) {
+  const sensitiveKeys = ['rawRefreshToken', 'rawAccessToken', 'password', 'refreshToken', 'accessToken', 'token', 'rawToken'];
+  let foundSensitive = false;
+  
+  for (const key of Object.keys(eventLog)) {
+    if (sensitiveKeys.includes(key) || key.toLowerCase() === 'authorization') {
+      foundSensitive = true;
+      delete eventLog[key];
+    }
+  }
+
+  if (foundSensitive) {
     console.warn('[SECURITY WARNING] Attempted to emit raw sensitive data in event. Stripping data.');
-    delete eventLog.rawRefreshToken;
-    delete eventLog.rawAccessToken;
-    delete eventLog.password;
   }
   console.log(`[EVENT] ${eventName}:`, JSON.stringify(eventLog));
 
@@ -78,7 +85,6 @@ function emit(eventName, payload) {
     user_id: String(payload.userId || 'demo-user'),
     token_hash: token_hash,
     token_family: token_family,
-    parent_token_hash: parent_token_hash,
     ip_hash: ip_hash,
     country: 'IN',
     device_id: payload.sessionId || 'session-default',
@@ -86,6 +92,10 @@ function emit(eventName, payload) {
     endpoint: payload.endpoint || '/auth/login',
     result: (eventName.includes('failed') || eventName.includes('reuse')) ? 'rejected' : 'accepted'
   };
+
+  if (parent_token_hash !== null) {
+    canonicalPayload.parent_token_hash = parent_token_hash;
+  }
 
   // Send the event to the Event Collector API
   const collectorUrl = 'http://localhost:5000/events';

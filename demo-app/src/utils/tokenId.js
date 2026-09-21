@@ -14,7 +14,7 @@ function generateOpaqueToken(byteLength = 32) {
  * Used so raw refresh tokens do not need to be stored or logged.
  */
 function hashToken(rawToken) {
-  return crypto.createHmac('sha256', config.jwtSecret)
+  return crypto.createHmac('sha256', config.tokenHmacSecret)
     .update(rawToken)
     .digest('hex');
 }

@@ -204,14 +204,13 @@ function formatDate(isoString) {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ` (${date.toLocaleDateString()})`;
 }
 
-// --- [API INTEGRATION POINT] ---
-// Swap the mock array operations below with a fetch to your Event Collector server:
-// Example:
-// fetch('http://localhost:5000/events')
-//   .then(res => res.json())
-//   .then(data => { eventsList = data; loadDashboardData(); })
 function getEvents() {
-  return Promise.resolve(eventsList);
+  return fetch('http://localhost:5000/events')
+    .then(res => res.json())
+    .catch(err => {
+      console.error('Failed to fetch live events, falling back to mock data:', err);
+      return eventsList; 
+    });
 }
 
 // --- 1. DASHBOARD LOADERS ---
