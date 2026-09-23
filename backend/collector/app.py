@@ -45,8 +45,11 @@ def contains_raw_credentials(data):
             return True
     return False
 
-@app.route("/events", methods=["POST"])
+@app.route("/events", methods=["POST", "OPTIONS"])
 def ingest_event():
+    if request.method == "OPTIONS":
+        return jsonify({}), 200
+
     if not event_schema:
         return jsonify({"error": "Schema not loaded on server"}), 500
 
@@ -96,10 +99,14 @@ def ingest_event():
 
     return jsonify({"status": "event persisted"}), 201
 
-# --- READ-ONLY API ROUTES FOR FRONTEND ---
+# --- READ-ONLY API ROUTES FOR FRONTEND & CLIENTS ---
 
-@app.route("/api/events", methods=["GET"])
+@app.route("/events", methods=["GET", "OPTIONS"])
+@app.route("/api/events", methods=["GET", "OPTIONS"])
 def get_events():
+    if request.method == "OPTIONS":
+        return jsonify({}), 200
+
     limit = request.args.get("limit", default=100, type=int)
     db = get_session()
     try:
@@ -122,6 +129,8 @@ def get_events():
                 "result": ev.result
             })
         return jsonify(result), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
     finally:
         db.close()
 
@@ -296,6 +305,13 @@ def serve_static(path):
     if os.path.exists(os.path.join(FRONTEND_DIR, path)):
         return send_from_directory(FRONTEND_DIR, path)
     return jsonify({"error": "Resource not found"}), 404
+
+@app.after_request
+def add_cors_headers(response):
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    return response
 
 if __name__ == "__main__":
     init_db()

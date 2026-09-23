@@ -13,11 +13,18 @@ function emit(eventName, payload) {
     ...payload,
   };
   
-  if (eventLog.rawRefreshToken || eventLog.rawAccessToken || eventLog.password) {
+  const sensitiveKeys = ['rawRefreshToken', 'rawAccessToken', 'password', 'refreshToken', 'accessToken', 'token', 'rawToken'];
+  let foundSensitive = false;
+  
+  for (const key of Object.keys(eventLog)) {
+    if (sensitiveKeys.includes(key) || key.toLowerCase() === 'authorization') {
+      foundSensitive = true;
+      delete eventLog[key];
+    }
+  }
+
+  if (foundSensitive) {
     console.warn('[SECURITY WARNING] Attempted to emit raw sensitive data in event. Stripping data.');
-    delete eventLog.rawRefreshToken;
-    delete eventLog.rawAccessToken;
-    delete eventLog.password;
   }
   console.log(`[EVENT] ${eventName}:`, JSON.stringify(eventLog));
 
