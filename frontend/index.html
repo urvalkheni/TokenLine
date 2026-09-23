@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TokenLine — Token Lifecycle Correlation & Attack Simulation</title>
+  <meta name="description" content="TokenLine reconstructs refresh-token parent/child chains into unified token families and flags refresh-token reuse in real time.">
+  
+  <!-- Preconnect & Fonts: Inter & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  
+  <!-- CSS Stylesheets -->
+  <link rel="stylesheet" href="css/tokens.css">
+  <link rel="stylesheet" href="css/main.css">
+</head>
+<body>
+
+  <!-- =========================================================================
+       Global Sticky Navigation Bar
+       ========================================================================= -->
+  <header class="site-nav" id="site-nav">
+    <div class="container nav-container">
+      <a href="#home" class="nav-brand" aria-label="TokenLine Home">
+        <div class="brand-logo-icon">T</div>
+        <span class="brand-logo">TokenLine</span>
+      </a>
+
+      <!-- Desktop Nav Items -->
+      <nav aria-label="Main Navigation">
+        <ul class="nav-links">
+          <li><a href="#home" class="nav-link">Home</a></li>
+          <li><a href="#how-it-works" class="nav-link">How it works</a></li>
+          <li><a href="#demo" class="nav-link">Live Demo</a></li>
+          <li><a href="#families" class="nav-link">Family Browser</a></li>
+          <li><a href="#docs" class="nav-link">Docs</a></li>
+          <li><a href="#about" class="nav-link">About</a></li>
+        </ul>
+      </nav>
+
+      <div class="nav-actions">
+        <a href="https://github.com/urvalkheni/TokenLine" target="_blank" rel="noopener noreferrer" class="btn btn-ghost" aria-label="GitHub Repository">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+          </svg>
+          <span>GitHub</span>
+        </a>
+        <a href="#demo" class="btn btn-primary">Run a scenario</a>
+        <button class="mobile-nav-toggle" id="mobile-nav-toggle" aria-label="Toggle navigation menu">
+          ☰
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Mobile Menu Overlay -->
+  <div class="mobile-overlay" id="mobile-overlay">
+    <ul class="mobile-links">
+      <li><a href="#home" class="mobile-link">Home</a></li>
+      <li><a href="#how-it-works" class="mobile-link">How it works</a></li>
+      <li><a href="#demo" class="mobile-link">Live Demo</a></li>
+      <li><a href="#families" class="mobile-link">Family Browser</a></li>
+      <li><a href="#docs" class="mobile-link">Docs</a></li>
+      <li><a href="#about" class="mobile-link">About</a></li>
+    </ul>
+    <a href="#demo" class="btn btn-primary" style="width: 100%; margin-top: auto;">Run a scenario</a>
+  </div>
+
+  <!-- =========================================================================
+       MAIN SPA VIEW CONTAINER
+       ========================================================================= -->
+  <main id="main-content" style="flex: 1;">
+
+    <!-- -----------------------------------------------------------------------
+         1. HOME VIEW (Hero + Globe + Live Family Preview)
+         ----------------------------------------------------------------------- -->
+    <section id="view-home" class="view-page">
+      
+      <!-- Hero Section -->
+      <section class="section hero-section">
+        <div class="container hero-grid">
+          <div class="hero-content">
+            <span class="eyebrow">Token Lifecycle Correlation</span>
+            <h1 class="hero-title">See every refresh.<br>Catch every reuse.</h1>
+            <p class="subhead">
+              TokenLine reconstructs parent/child refresh chains into unified token families and flags token reuse without false alerts or opaque black boxes.
+            </p>
+            <div class="hero-actions">
+              <a href="#demo" class="btn btn-primary">Run a scenario</a>
+              <a href="#docs" class="btn btn-secondary">Read the docs</a>
+            </div>
+            
+            <div class="hero-stats">
+              <div class="stat-item">
+                <div class="stat-num">100%</div>
+                <div class="stat-label">Privacy-Preserving (Salted Hashes)</div>
+              </div>
+              <div class="stat-item">
+                <div class="stat-num">5</div>
+                <div class="stat-label">Attack Scenarios Simulated</div>
+              </div>
+              <div class="stat-item">
+                <div class="stat-num">0ms</div>
+                <div class="stat-label">Network Egress / Local Isolation</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Globe Visualization Canvas -->
+          <div class="globe-wrapper globe-stage">
+            <canvas id="hero-globe-canvas" class="globe-canvas" aria-label="3D Interactive Token Globe"></canvas>
+            <div id="globe-tooltip" class="globe-tooltip"></div>
+            <div class="legend" style="position: absolute; bottom: 8px; left: 8px; display: flex; gap: 16px; font-size: 11px; color: var(--text-secondary); font-family: var(--font-mono);">
+              <span style="display: inline-flex; align-items: center; gap: 6px;"><i class="dot" style="width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: var(--accent-cyan);"></i>active</span>
+              <span style="display: inline-flex; align-items: center; gap: 6px;"><i class="dot" style="width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: var(--accent-amber);"></i>rotated</span>
+              <span style="display: inline-flex; align-items: center; gap: 6px;"><i class="dot" style="width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: var(--danger-red);"></i>reused</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Condensed Live Preview Section -->
+      <section class="section" style="border-top: 1px solid var(--border-hairline); background-color: var(--bg-panel);">
+        <div class="container">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-8); flex-wrap: wrap; gap: 16px;">
+            <div>
+              <span class="eyebrow">Real-Time Lineage Reconstruction</span>
+              <h2 class="section-title" style="margin-bottom: 0;">Sample Token Family Chain</h2>
+            </div>
+            <a href="#families" class="btn btn-secondary">Open Family Browser →</a>
+          </div>
+
+          <div class="card" style="padding: var(--space-8);">
+            <div id="home-preview-diagram"></div>
+          </div>
+        </div>
+      </section>
+
+    </section>
+
+    <!-- -----------------------------------------------------------------------
+         2. HOW IT WORKS / STAGES VIEW
+         ----------------------------------------------------------------------- -->
+    <section id="view-how-it-works" class="view-page" style="display: none;">
+      <section class="section stages-section">
+        <div class="container">
+          <div style="max-width: 640px; margin-bottom: var(--space-12);">
+            <span class="eyebrow">Correlation Lifecycle</span>
+            <h2 class="section-title">How TokenLine Operates</h2>
+            <p>From individual telemetry events to reconstructed forensic trees, explore the 5 stages of token tracking.</p>
+          </div>
+
+          <div class="stages-grid">
+            <!-- 5 Stages List -->
+            <div class="stages-list">
+              
+              <div class="stage-card active" data-stage="1" id="stage-capture">
+                <div class="stage-num">01</div>
+                <h3 class="stage-title">Capture</h3>
+                <p class="stage-desc">Every <code>token_issued</code>, <code>token_refreshed</code>, and <code>token_used</code> event enters the pipeline as a schema-valid record.</p>
+                <ul class="stage-bullets">
+                  <li>Validates JSON schema against <code>schema/event.schema.json</code></li>
+                  <li>Rejects raw credentials or exposed JWTs immediately</li>
+                </ul>
+              </div>
+
+              <div class="stage-card" data-stage="2" id="stage-correlate">
+                <div class="stage-num">02</div>
+                <h3 class="stage-title">Correlate</h3>
+                <p class="stage-desc">Parent/child links are resolved; token_family chains (A → B → C) are reconstructed dynamically as rotation occurs.</p>
+                <ul class="stage-bullets">
+                  <li>Propagates stable family IDs from roots to child successors</li>
+                  <li>Marks parent tokens as rotated in memory and database</li>
+                </ul>
+              </div>
+
+              <div class="stage-card" data-stage="3" id="stage-detect">
+                <div class="stage-num">03</div>
+                <h3 class="stage-title">Detect</h3>
+                <p class="stage-desc">Reuse of an already-rotated token, replay, concurrent use, and impossible travel conditions are flagged.</p>
+                <ul class="stage-bullets">
+                  <li>Flags refresh-token reuse on already-rotated credentials</li>
+                  <li>Highlights compromised lineage nodes in red</li>
+                </ul>
+              </div>
+
+              <div class="stage-card" data-stage="4" id="stage-investigate">
+                <div class="stage-num">04</div>
+                <h3 class="stage-title">Investigate</h3>
+                <p class="stage-desc">Every flagged condition carries its full chain and context, ready for a security analyst or alerting engine.</p>
+                <ul class="stage-bullets">
+                  <li>Exposes exact rotation timestamps and reuse attempt events</li>
+                  <li>Visualizes complete ancestor and descendant graphs</li>
+                </ul>
+              </div>
+
+              <div class="stage-card" data-stage="5" id="stage-evolve">
+                <div class="stage-num">05</div>
+                <h3 class="stage-title">Evolve</h3>
+                <p class="stage-desc">The correlation model extends as new event types and detection rules are added, without breaking existing families.</p>
+                <ul class="stage-bullets">
+                  <li>Additive design ensures backwards compatibility</li>
+                  <li>Independent token families remain strictly isolated</li>
+                </ul>
+              </div>
+
+            </div>
+
+            <!-- Sticky Stage Visualizer -->
+            <div class="stage-visualizer-sticky">
+              <div class="visualizer-header">
+                <span class="eyebrow" style="margin-bottom: 0;">Interactive Stage Preview</span>
+                <span class="badge badge-active" id="stage-step-indicator">01 / 05</span>
+              </div>
+              <div class="visualizer-body">
+                <div id="stage-diagram-container" style="width: 100%;"></div>
+              </div>
+              <div class="visualizer-footer">
+                <span style="font-size: 0.8125rem; color: var(--text-muted);">Click any stage card to step through the pipeline.</span>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </section>
+    </section>
+
+    <!-- -----------------------------------------------------------------------
+         3. LIVE DEMO / ATTACK SIMULATOR VIEW
+         ----------------------------------------------------------------------- -->
+    <section id="view-demo" class="view-page" style="display: none;">
+      <section class="section">
+        <div class="container">
+          
+          <div style="margin-bottom: var(--space-8);">
+            <span class="eyebrow">Local Attack Simulation</span>
+            <h2 class="section-title">Attack Simulator & Correlator Live Demo</h2>
+            <p>Trigger synthetic authentication attacks and observe the correlator reconstruct token lineages and flag reuse in real time.</p>
+          </div>
+
+          <!-- Synthetic Security Boundary Notice -->
+          <div style="background-color: var(--bg-panel); border: 1px solid var(--border-hairline); border-radius: var(--radius-md); padding: var(--space-4) var(--space-6); margin-bottom: var(--space-8); display: flex; align-items: center; gap: var(--space-3);">
+            <span style="color: var(--accent-cyan); font-size: 1.25rem;">🔒</span>
+            <span style="font-size: 0.8125rem; color: var(--text-secondary);">
+              <strong>Security Boundary:</strong> All scenarios execute entirely locally using synthetic users, hashes, and simulated devices. Zero external network egress or real credentials.
+            </span>
+          </div>
+
+          <!-- Scenario Cards Grid -->
+          <div class="scenarios-grid" id="scenario-cards-container">
+            <!-- Populated dynamically via JS -->
+          </div>
+
+          <!-- Live Visualizer & Event Log -->
+          <div style="display: flex; flex-direction: column; gap: var(--space-8);">
+            
+            <!-- Chain Diagram Card -->
+            <div class="card" style="padding: var(--space-6);">
+              <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-4); border-bottom: 1px solid var(--border-hairline); padding-bottom: var(--space-3);">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <h3 class="card-title">Live Token Family Lineage</h3>
+                  <span class="badge badge-active" id="active-scenario-name">refresh-reuse</span>
+                </div>
+                <span style="font-size: 0.75rem; color: var(--text-muted); font-family: var(--font-mono);">Click nodes for deep forensic inspection</span>
+              </div>
+              <div id="demo-diagram-container"></div>
+            </div>
+
+            <!-- Monospace Event Log -->
+            <div class="event-log-container">
+              <div class="event-log-header">
+                <div style="display: flex; align-items: center; gap: var(--space-3);">
+                  <span class="card-title" style="font-size: 1rem;">Ingested Telemetry Stream</span>
+                  <span class="badge badge-active">LIVE</span>
+                </div>
+                <span style="font-size: 0.75rem; color: var(--text-muted); font-family: var(--font-mono);">event.schema.json format</span>
+              </div>
+              <div class="log-table-wrap">
+                <table class="event-table">
+                  <thead>
+                    <tr>
+                      <th>TIME (UTC)</th>
+                      <th>EVENT ID</th>
+                      <th>EVENT TYPE</th>
+                      <th>TOKEN HASH</th>
+                      <th>IP HASH</th>
+                      <th>DEVICE ID</th>
+                      <th>RESULT</th>
+                    </tr>
+                  </thead>
+                  <tbody id="event-log-tbody">
+                    <!-- Populated dynamically -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+          </div>
+
+        </div>
+      </section>
+    </section>
+
+    <!-- -----------------------------------------------------------------------
+         4. FAMILY BROWSER VIEW
+         ----------------------------------------------------------------------- -->
+    <section id="view-families" class="view-page" style="display: none;">
+      <section class="section">
+        <div class="container">
+          
+          <div style="margin-bottom: var(--space-8);">
+            <span class="eyebrow">Forensic Lineages</span>
+            <h2 class="section-title">Token Family Catalog</h2>
+            <p>Browse, filter, and inspect independent token families. Concurrently active families are strictly isolated.</p>
+          </div>
+
+          <!-- Search & Filter Controls -->
+          <div class="search-filter-bar">
+            <input type="text" id="family-search-input" class="search-input" placeholder="Search by Family ID or Token Hash...">
+            <div style="display: flex; gap: var(--space-2);">
+              <button class="btn btn-secondary filter-btn active" data-filter="all">All Families</button>
+              <button class="btn btn-secondary filter-btn" data-filter="reused">Reused Only</button>
+              <button class="btn btn-secondary filter-btn" data-filter="active">Active Only</button>
+              <button class="btn btn-secondary filter-btn" data-filter="rotated">Rotated Only</button>
+            </div>
+          </div>
+
+          <!-- Families Grid -->
+          <div class="families-grid" id="families-grid">
+            <!-- Populated dynamically -->
+          </div>
+
+        </div>
+      </section>
+    </section>
+
+    <!-- -----------------------------------------------------------------------
+         5. DOCS VIEW (Schema Reference)
+         ----------------------------------------------------------------------- -->
+    <section id="view-docs" class="view-page" style="display: none;">
+      <section class="section">
+        <div class="container" style="max-width: 960px;">
+          
+          <div style="margin-bottom: var(--space-8);">
+            <span class="eyebrow">Event Specification</span>
+            <h2 class="section-title">Telemetry Schema Reference</h2>
+            <p>All TokenLine events strictly adhere to <code>schema/event.schema.json</code>. Raw credentials and plaintext tokens are rejected at ingestion.</p>
+          </div>
+
+          <div class="card" style="margin-bottom: var(--space-8);">
+            <h3 class="card-title" style="margin-bottom: var(--space-2);">Schema Properties Table</h3>
+            <p style="font-size: 0.875rem; color: var(--text-muted);">Direct rendering of canonical JSON Schema fields.</p>
+            
+            <div class="schema-table-wrap">
+              <table class="schema-table">
+                <thead>
+                  <tr>
+                    <th>FIELD NAME</th>
+                    <th>DATA TYPE</th>
+                    <th>REQUIRED</th>
+                    <th>DESCRIPTION & ENUMS</th>
+                  </tr>
+                </thead>
+                <tbody id="schema-fields-tbody">
+                  <!-- Populated dynamically from schema definition -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3 class="card-title" style="margin-bottom: var(--space-4);">Example Schema-Valid Payload</h3>
+            <pre style="background-color: var(--bg-void); border: 1px solid var(--border-hairline); border-radius: var(--radius-md); padding: var(--space-4); color: var(--accent-cyan); font-size: 0.8125rem; overflow-x: auto;">
+{
+  "event_id": "evt-003",
+  "event_type": "token_refreshed",
+  "time": "2026-08-16T10:30:00Z",
+  "user_id": "user-khushi",
+  "token_hash": "token_hash_e5f6g7h8",
+  "token_family": "family-khushi-1",
+  "parent_token_hash": "token_hash_a1b2c3d4",
+  "ip_hash": "ip_hash_home",
+  "country": "IN",
+  "device_id": "device-laptop-khushi",
+  "user_agent_family": "Chrome",
+  "endpoint": "/api/auth/refresh",
+  "result": "accepted"
+}</pre>
+          </div>
+
+        </div>
+      </section>
+    </section>
+
+    <!-- -----------------------------------------------------------------------
+         6. ABOUT VIEW
+         ----------------------------------------------------------------------- -->
+    <section id="view-about" class="view-page" style="display: none;">
+      <section class="section">
+        <div class="container" style="max-width: 860px;">
+          
+          <span class="eyebrow">Project Foundation</span>
+          <h2 class="section-title">About TokenLine</h2>
+          
+          <div class="card" style="margin-bottom: var(--space-6);">
+            <h3 class="card-title" style="margin-bottom: var(--space-3);">Mission & Core Problem</h3>
+            <p style="margin-bottom: var(--space-4);">
+              Modern authentication pipelines log hundreds of disconnected events across multiple servers. When a refresh token is stolen and replayed, security investigators are left searching through flat, unlinked audit logs.
+            </p>
+            <p>
+              <strong>TokenLine</strong> introduces real-time token family correlation. It maintains parent/child rotation lineages ($A \rightarrow B \rightarrow C$), identifies refresh-token reuse on already-rotated tokens, and renders the complete lifecycle into an investigable visual timeline.
+            </p>
+          </div>
+
+          <div class="card" style="margin-bottom: var(--space-6);">
+            <h3 class="card-title" style="margin-bottom: var(--space-3);">Synthetic Security Boundary</h3>
+            <p>
+              To ensure safety and privacy, TokenLine operates solely with salted cryptographic hashes and deterministic synthetic attack simulators. No production credentials, live tokens, or external network infrastructures are ever touched.
+            </p>
+          </div>
+
+          <div class="card">
+            <h3 class="card-title" style="margin-bottom: var(--space-3);">Key Capabilities</h3>
+            <ul class="stage-bullets">
+              <li><strong>Token-Family Correlator:</strong> Reconstructs $A \rightarrow B \rightarrow C$ chains and flags reuse conditions.</li>
+              <li><strong>Local Attack Simulator:</strong> 5 deterministic scenarios (Replay, Refresh-Reuse, Revoked Token, Concurrent Use, Impossible Travel).</li>
+              <li><strong>Technical Wireframe Visualization:</strong> Real-time orbital globe and directional family graphs.</li>
+            </ul>
+          </div>
+
+        </div>
+      </section>
+    </section>
+
+    <!-- -----------------------------------------------------------------------
+         7. 404 VIEW
+         ----------------------------------------------------------------------- -->
+    <section id="view-404" class="view-page" style="display: none;">
+      <section class="section" style="text-align: center; padding-top: 120px;">
+        <div class="container">
+          <span class="eyebrow" style="color: var(--danger-red);">404 Error</span>
+          <h1 class="hero-title" style="font-size: 4rem; margin-bottom: var(--space-4);">Route Not Found</h1>
+          <p class="subhead" style="margin: 0 auto var(--space-8) auto;">The requested timeline view or token family does not exist in the correlator index.</p>
+          <a href="#home" class="btn btn-primary">Return to Home</a>
+        </div>
+      </section>
+    </section>
+
+  </main>
+
+  <!-- =========================================================================
+       Token Node Detail Drawer Modal
+       ========================================================================= -->
+  <div class="drawer-backdrop" id="detail-drawer-backdrop"></div>
+  <aside class="detail-drawer" id="token-detail-drawer" aria-labelledby="drawer-token-title">
+    <div class="drawer-header">
+      <div style="display: flex; flex-direction: column; gap: 2px;">
+        <span class="eyebrow" style="margin-bottom: 0;">Token Inspection</span>
+        <h3 id="drawer-token-title" class="mono" style="font-size: 1rem; color: var(--text-primary);">tok_hash_value</h3>
+      </div>
+      <button class="btn btn-ghost btn-icon drawer-close-btn" aria-label="Close detail drawer">✕</button>
+    </div>
+    <div class="drawer-body" id="drawer-content">
+      <!-- Populated dynamically -->
+    </div>
+  </aside>
+
+  <!-- =========================================================================
+       Family Full Detail Modal
+       ========================================================================= -->
+  <div class="drawer-backdrop" id="family-modal-backdrop">
+    <div class="card" style="max-width: 900px; width: 90%; margin: 60px auto; background-color: var(--bg-panel); border: 1px solid var(--border-hairline); max-height: 85vh; display: flex; flex-direction: column;">
+      <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border-hairline); padding-bottom: 16px; margin-bottom: 20px;">
+        <div>
+          <span class="eyebrow">Full Family Chain</span>
+          <h2 id="modal-family-title" class="mono" style="font-size: 1.25rem;">family-id</h2>
+        </div>
+        <button class="btn btn-ghost btn-icon" id="family-modal-close" aria-label="Close modal">✕</button>
+      </div>
+      <div id="family-full-diagram-slot" style="flex: 1; overflow-y: auto; padding: 12px 0;"></div>
+    </div>
+  </div>
+
+  <!-- =========================================================================
+       Global Footer
+       ========================================================================= -->
+  <footer class="site-footer">
+    <div class="container">
+      <div class="footer-grid">
+        
+        <div class="footer-col">
+          <div class="brand-logo" style="margin-bottom: 8px;">
+            <div class="brand-logo-icon">T</div>
+            <span>TokenLine</span>
+          </div>
+          <p style="font-size: 0.875rem; color: var(--text-muted); max-width: 320px;">
+            Real-time token family lineage correlation, forensic reconstruction, and safe local attack simulation.
+          </p>
+        </div>
+
+        <div class="footer-col">
+          <h4 class="footer-title">Product</h4>
+          <ul class="footer-links">
+            <li><a href="#how-it-works" class="footer-link">How it works</a></li>
+            <li><a href="#demo" class="footer-link">Live Demo</a></li>
+            <li><a href="#families" class="footer-link">Family Browser</a></li>
+            <li><a href="#docs" class="footer-link">Schema Docs</a></li>
+          </ul>
+        </div>
+
+        <div class="footer-col">
+          <h4 class="footer-title">Project</h4>
+          <ul class="footer-links">
+            <li><a href="#about" class="footer-link">About TokenLine</a></li>
+            <li><a href="https://github.com/urvalkheni/TokenLine" target="_blank" rel="noopener noreferrer" class="footer-link">GitHub Repository</a></li>
+            <li><a href="#docs" class="footer-link">Event Schema</a></li>
+          </ul>
+        </div>
+
+      </div>
+
+      <div class="footer-bottom">
+        <div>© 2026 TokenLine Research Project. All rights reserved.</div>
+        <div class="security-boundary-note">
+          No real tokens, credentials, or production systems were used to build this.
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Scripts -->
+  <script src="js/globe.js"></script>
+  <script src="js/diagram.js"></script>
+  <script src="js/data.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

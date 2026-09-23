@@ -78,7 +78,6 @@ function emit(eventName, payload) {
     user_id: String(payload.userId || 'demo-user'),
     token_hash: token_hash,
     token_family: token_family,
-    parent_token_hash: parent_token_hash,
     ip_hash: ip_hash,
     country: 'IN',
     device_id: payload.sessionId || 'session-default',
@@ -86,6 +85,10 @@ function emit(eventName, payload) {
     endpoint: payload.endpoint || '/auth/login',
     result: (eventName.includes('failed') || eventName.includes('reuse')) ? 'rejected' : 'accepted'
   };
+
+  if (parent_token_hash) {
+    canonicalPayload.parent_token_hash = parent_token_hash;
+  }
 
   // Send the event to the Event Collector API
   const collectorUrl = 'http://localhost:5000/events';
