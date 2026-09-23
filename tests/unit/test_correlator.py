@@ -153,10 +153,24 @@ def test_khushi_synthetic_dataset_processing(db_session):
     for event in events:
         process_event(event, db_session)
 
-    # In Khushi's dataset, event 3 rotates token_hash_a1b2c3d4 to token_hash_e5f6g7h8.
-    # But wait, in the dataset, event 3 does not carry parent_token_hash because the original schema didn't support it!
-    # Wait, we can test that if we append parent_token_hash to the events, it rotates correctly.
-    # Let's verify by manually checking links for events where parent_token_hash is specified.
-    # Let's check:
     parent = db_session.query(TokenFamilyMember).filter(TokenFamilyMember.token_hash == "token_hash_a1b2c3d4").first()
+    child = db_session.query(TokenFamilyMember).filter(TokenFamilyMember.token_hash == "token_hash_e5f6g7h8").first()
+
     assert parent is not None
+    assert parent.is_rotated is True
+    assert parent.token_family == "family-khushi-1"
+
+    assert child is not None
+    assert child.is_rotated is False
+    assert child.token_family == "family-khushi-1"
+    assert child.parent_token_hash == "token_hash_a1b2c3d4"
+
+    # Verify reconstruction
+    chain = reconstruct_chain("token_hash_e5f6g7h8", db_session)
+    assert chain == ["token_hash_a1b2c3d4", "token_hash_e5f6g7h8"]
+
+    # Verify that the reuse of rotated token 'token_hash_a1b2c3d4' was flagged/recorded
+    reuse_records = db_session.query(TokenReuseRecord).filter(TokenReuseRecord.token_hash == "token_hash_a1b2c3d4").all()
+    assert len(reuse_records) == 1
+    assert reuse_records[0].token_family == "family-khushi-1"
+    assert reuse_records[0].attempted_event_id == "evt-005"

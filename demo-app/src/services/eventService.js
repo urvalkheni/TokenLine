@@ -93,7 +93,7 @@ function emit(eventName, payload) {
     result: (eventName.includes('failed') || eventName.includes('reuse')) ? 'rejected' : 'accepted'
   };
 
-  if (parent_token_hash !== null) {
+  if (parent_token_hash) {
     canonicalPayload.parent_token_hash = parent_token_hash;
   }
 
