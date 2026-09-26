@@ -205,8 +205,12 @@ function formatDate(isoString) {
 }
 
 function getEvents() {
-  return fetch('http://localhost:5000/events')
+  return fetch('http://127.0.0.1:5000/events')
     .then(res => res.json())
+    .then(data => {
+      eventsList = data; // Update global state
+      return data;
+    })
     .catch(err => {
       console.error('Failed to fetch live events, falling back to mock data:', err);
       return eventsList; 

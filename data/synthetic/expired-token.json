@@ -1,0 +1,58 @@
+[
+  {
+    "event_id": "evt-expired-001",
+    "event_type": "token_issued",
+    "time": "2026-08-16T10:00:00Z",
+    "user_id": "user-synthetic-expired",
+    "token_hash": "hash_cccb3c4d0c00",
+    "ip_hash": "hash_da353ced7cc7",
+    "device_id": "device-mobile-client",
+    "result": "accepted",
+    "token_family": "family-expired-42",
+    "country": "US",
+    "user_agent_family": "MobileSafari",
+    "endpoint": "/api/auth/login"
+  },
+  {
+    "event_id": "evt-expired-002",
+    "event_type": "token_used",
+    "time": "2026-08-16T10:05:00Z",
+    "user_id": "user-synthetic-expired",
+    "token_hash": "hash_cccb3c4d0c00",
+    "ip_hash": "hash_da353ced7cc7",
+    "device_id": "device-mobile-client",
+    "result": "accepted",
+    "token_family": "family-expired-42",
+    "country": "US",
+    "user_agent_family": "MobileSafari",
+    "endpoint": "/api/v1/profile"
+  },
+  {
+    "event_id": "evt-expired-003",
+    "event_type": "token_expired",
+    "time": "2026-08-16T11:00:00Z",
+    "user_id": "user-synthetic-expired",
+    "token_hash": "hash_cccb3c4d0c00",
+    "ip_hash": "hash_da353ced7cc7",
+    "device_id": "device-mobile-client",
+    "result": "accepted",
+    "token_family": "family-expired-42",
+    "country": "US",
+    "user_agent_family": "MobileSafari",
+    "endpoint": "/api/v1/profile"
+  },
+  {
+    "event_id": "evt-expired-004",
+    "event_type": "token_used",
+    "time": "2026-08-16T11:01:40Z",
+    "user_id": "user-synthetic-expired",
+    "token_hash": "hash_cccb3c4d0c00",
+    "ip_hash": "hash_da353ced7cc7",
+    "device_id": "device-mobile-client",
+    "result": "rejected",
+    "token_family": "family-expired-42",
+    "country": "US",
+    "user_agent_family": "MobileSafari",
+    "endpoint": "/api/v1/profile"
+  }
+]

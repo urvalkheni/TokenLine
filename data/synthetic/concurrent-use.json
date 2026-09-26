@@ -1,0 +1,58 @@
+[
+  {
+    "event_id": "evt-concurrent-001",
+    "event_type": "token_issued",
+    "time": "2026-08-16T10:00:00Z",
+    "user_id": "user-synthetic-04",
+    "token_hash": "hash_6a46517c1916",
+    "ip_hash": "hash_56eff2b56a6b",
+    "device_id": "device-workstation-office",
+    "result": "accepted",
+    "token_family": "family-concurrent-42",
+    "country": "US",
+    "user_agent_family": "Edge",
+    "endpoint": "/api/auth/login"
+  },
+  {
+    "event_id": "evt-concurrent-002",
+    "event_type": "token_used",
+    "time": "2026-08-16T10:01:00Z",
+    "user_id": "user-synthetic-04",
+    "token_hash": "hash_6a46517c1916",
+    "ip_hash": "hash_56eff2b56a6b",
+    "device_id": "device-workstation-office",
+    "result": "accepted",
+    "token_family": "family-concurrent-42",
+    "country": "US",
+    "user_agent_family": "Edge",
+    "endpoint": "/api/v1/documents"
+  },
+  {
+    "event_id": "evt-concurrent-003",
+    "event_type": "token_used",
+    "time": "2026-08-16T10:01:05Z",
+    "user_id": "user-synthetic-04",
+    "token_hash": "hash_6a46517c1916",
+    "ip_hash": "hash_14116da75a8e",
+    "device_id": "device-rogue-clone",
+    "result": "accepted",
+    "token_family": "family-concurrent-42",
+    "country": "DE",
+    "user_agent_family": "Go-http-client",
+    "endpoint": "/api/v1/documents/export"
+  },
+  {
+    "event_id": "evt-concurrent-004",
+    "event_type": "suspicious_device",
+    "time": "2026-08-16T10:01:10Z",
+    "user_id": "user-synthetic-04",
+    "token_hash": "hash_6a46517c1916",
+    "ip_hash": "hash_14116da75a8e",
+    "device_id": "device-rogue-clone",
+    "result": "rejected",
+    "token_family": "family-concurrent-42",
+    "country": "DE",
+    "user_agent_family": "Go-http-client",
+    "endpoint": "/api/v1/documents/export"
+  }
+]

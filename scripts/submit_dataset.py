@@ -4,17 +4,20 @@ import os
 import sys
 
 URL = "http://127.0.0.1:5000/events"
-DATASET_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "synthetic", "khushi_dataset.json")
+DEFAULT_DATASET = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "synthetic", "normal.json")
+
 
 def main():
-    if not os.path.exists(DATASET_PATH):
-        print(f"Dataset file not found at {DATASET_PATH}")
+    dataset_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_DATASET
+
+    if not os.path.exists(dataset_path):
+        print(f"Dataset file not found at {dataset_path}")
         sys.exit(1)
 
-    with open(DATASET_PATH, "r") as f:
+    with open(dataset_path, "r", encoding="utf-8") as f:
         events = json.load(f)
 
-    print(f"Found {len(events)} events in dataset. Starting submission to {URL}...")
+    print(f"Found {len(events)} events in dataset ({os.path.basename(dataset_path)}). Starting submission to {URL}...")
     
     success_count = 0
     for event in events:
@@ -29,6 +32,7 @@ def main():
             print(f"Failed to submit event {event['event_id']}: {e}")
 
     print(f"\nSubmission complete: {success_count}/{len(events)} events accepted.")
+
 
 if __name__ == "__main__":
     main()

@@ -1,0 +1,44 @@
+[
+  {
+    "event_id": "evt-travel-001",
+    "event_type": "token_issued",
+    "time": "2026-08-16T10:00:00Z",
+    "user_id": "user-synthetic-05",
+    "token_hash": "hash_9335e39804b0",
+    "ip_hash": "hash_f34f6aa33970",
+    "device_id": "device-traveler-laptop",
+    "result": "accepted",
+    "token_family": "family-travel-42",
+    "country": "IN",
+    "user_agent_family": "Chrome",
+    "endpoint": "/api/auth/login"
+  },
+  {
+    "event_id": "evt-travel-002",
+    "event_type": "token_used",
+    "time": "2026-08-16T10:01:00Z",
+    "user_id": "user-synthetic-05",
+    "token_hash": "hash_9335e39804b0",
+    "ip_hash": "hash_f34f6aa33970",
+    "device_id": "device-traveler-laptop",
+    "result": "accepted",
+    "token_family": "family-travel-42",
+    "country": "IN",
+    "user_agent_family": "Chrome",
+    "endpoint": "/api/v1/profile"
+  },
+  {
+    "event_id": "evt-travel-003",
+    "event_type": "suspicious_location",
+    "time": "2026-08-16T10:05:00Z",
+    "user_id": "user-synthetic-05",
+    "token_hash": "hash_9335e39804b0",
+    "ip_hash": "hash_d9bd2b15e5cb",
+    "device_id": "device-traveler-laptop",
+    "result": "rejected",
+    "token_family": "family-travel-42",
+    "country": "US",
+    "user_agent_family": "Chrome",
+    "endpoint": "/api/v1/profile"
+  }
+]

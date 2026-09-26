@@ -4,3 +4,5 @@ __pycache__/
 *.db
 tokenline.db
 test_collector.db
+.pytest_temp/
+.pytest_cache/

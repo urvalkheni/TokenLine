@@ -143,34 +143,38 @@ def test_missing_parent_graceful_handling(db_session):
     assert child.parent_token_hash == "token-parent-unseen"
     assert child.token_family == parent.token_family
 
-def test_khushi_synthetic_dataset_processing(db_session):
-    # Load dataset
-    dataset_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "synthetic", "khushi_dataset.json")
-    with open(dataset_path, "r") as f:
+def test_synthetic_dataset_processing(db_session):
+    # Load Issue #8 synthetic dataset (refresh-reuse.json)
+    dataset_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "synthetic", "refresh-reuse.json")
+    with open(dataset_path, "r", encoding="utf-8") as f:
         events = json.load(f)
 
     # Feed events
     for event in events:
         process_event(event, db_session)
 
-    parent = db_session.query(TokenFamilyMember).filter(TokenFamilyMember.token_hash == "token_hash_a1b2c3d4").first()
-    child = db_session.query(TokenFamilyMember).filter(TokenFamilyMember.token_hash == "token_hash_e5f6g7h8").first()
+    root_token = events[0]["token_hash"]
+    child_token = events[2]["token_hash"]
+    family_id = events[0]["token_family"]
+
+    parent = db_session.query(TokenFamilyMember).filter(TokenFamilyMember.token_hash == root_token).first()
+    child = db_session.query(TokenFamilyMember).filter(TokenFamilyMember.token_hash == child_token).first()
 
     assert parent is not None
     assert parent.is_rotated is True
-    assert parent.token_family == "family-khushi-1"
+    assert parent.token_family == family_id
+    assert parent.superseded_by == child_token
 
     assert child is not None
-    assert child.is_rotated is False
-    assert child.token_family == "family-khushi-1"
-    assert child.parent_token_hash == "token_hash_a1b2c3d4"
+    assert child.token_family == family_id
+    assert child.parent_token_hash == root_token
 
     # Verify reconstruction
-    chain = reconstruct_chain("token_hash_e5f6g7h8", db_session)
-    assert chain == ["token_hash_a1b2c3d4", "token_hash_e5f6g7h8"]
+    chain = reconstruct_chain(child_token, db_session)
+    assert chain == [root_token, child_token]
 
-    # Verify that the reuse of rotated token 'token_hash_a1b2c3d4' was flagged/recorded
-    reuse_records = db_session.query(TokenReuseRecord).filter(TokenReuseRecord.token_hash == "token_hash_a1b2c3d4").all()
+    # Verify that the reuse of rotated token was flagged/recorded
+    reuse_records = db_session.query(TokenReuseRecord).filter(TokenReuseRecord.token_hash == root_token).all()
     assert len(reuse_records) == 1
-    assert reuse_records[0].token_family == "family-khushi-1"
-    assert reuse_records[0].attempted_event_id == "evt-005"
+    assert reuse_records[0].token_family == family_id
+    assert reuse_records[0].attempted_event_id == "evt-reuse-005"

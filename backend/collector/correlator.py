@@ -39,10 +39,11 @@ def process_event(event_data: dict, db: Session):
         if parent:
             family_id = parent.token_family
             # Mark parent as rotated
-            parent.is_rotated = True
-            parent.rotated_at = time
-            parent.superseded_by = token_hash
-            db.add(parent)
+            if not parent.is_rotated:
+                parent.is_rotated = True
+                parent.rotated_at = time
+                parent.superseded_by = token_hash
+                db.add(parent)
         else:
             # Parent not seen before. Create a root for it provisionally.
             family_id = event_token_family or f"family-{uuid.uuid4().hex[:8]}"
