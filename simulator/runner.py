@@ -28,12 +28,17 @@ RefreshReuseScenarioGenerator = _load_scenario_class("refresh-reuse", "RefreshRe
 RevokedTokenScenarioGenerator = _load_scenario_class("revoked-token", "RevokedTokenScenarioGenerator")
 ConcurrentUseScenarioGenerator = _load_scenario_class("concurrent-use", "ConcurrentUseScenarioGenerator")
 ImpossibleTravelScenarioGenerator = _load_scenario_class("impossible-travel", "ImpossibleTravelScenarioGenerator")
+NormalScenarioGenerator = _load_scenario_class("normal", "NormalScenarioGenerator")
+ExpiredTokenScenarioGenerator = _load_scenario_class("expired-token", "ExpiredTokenScenarioGenerator")
 
 # Mapping scenario names (both hyphen and underscore versions)
 SCENARIO_REGISTRY: Dict[str, Type[BaseScenarioGenerator]] = {
+    "normal": NormalScenarioGenerator,
     "replay": ReplayScenarioGenerator,
     "refresh-reuse": RefreshReuseScenarioGenerator,
     "refresh_reuse": RefreshReuseScenarioGenerator,
+    "expired-token": ExpiredTokenScenarioGenerator,
+    "expired_token": ExpiredTokenScenarioGenerator,
     "revoked-token": RevokedTokenScenarioGenerator,
     "revoked_token": RevokedTokenScenarioGenerator,
     "concurrent-use": ConcurrentUseScenarioGenerator,
@@ -43,8 +48,10 @@ SCENARIO_REGISTRY: Dict[str, Type[BaseScenarioGenerator]] = {
 }
 
 CANONICAL_SCENARIO_NAMES = [
+    "normal",
     "replay",
     "refresh-reuse",
+    "expired-token",
     "revoked-token",
     "concurrent-use",
     "impossible-travel",
@@ -124,6 +131,11 @@ def main():
         action="store_true",
         help="Pretty print JSON output"
     )
+    parser.add_argument(
+        "--generate-datasets",
+        action="store_true",
+        help="Generate all six synthetic datasets into data/synthetic/"
+    )
 
     args = parser.parse_args()
 
@@ -131,6 +143,15 @@ def main():
         print("Available attack simulation scenarios:")
         for name in CANONICAL_SCENARIO_NAMES:
             print(f"  - {name}")
+        return
+
+    if args.generate_datasets:
+        from simulator.dataset_generator import generate_all_datasets
+        out_dir = args.output if args.output else None
+        results = generate_all_datasets(output_dir=out_dir, seed=args.seed)
+        print(f"Generated {len(results)} synthetic datasets:")
+        for name, path in results.items():
+            print(f"  - {name}: {path}")
         return
 
     if not args.scenario and not args.all:

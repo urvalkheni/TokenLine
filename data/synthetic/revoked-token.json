@@ -1,0 +1,58 @@
+[
+  {
+    "event_id": "evt-logout-001",
+    "event_type": "token_issued",
+    "time": "2026-08-16T10:00:00Z",
+    "user_id": "user-synthetic-03",
+    "token_hash": "hash_19aa6e0d7451",
+    "ip_hash": "hash_2f78c43c4879",
+    "device_id": "device-workstation-01",
+    "result": "accepted",
+    "token_family": "family-logout-42",
+    "country": "US",
+    "user_agent_family": "Firefox",
+    "endpoint": "/api/auth/login"
+  },
+  {
+    "event_id": "evt-logout-002",
+    "event_type": "token_used",
+    "time": "2026-08-16T10:05:00Z",
+    "user_id": "user-synthetic-03",
+    "token_hash": "hash_19aa6e0d7451",
+    "ip_hash": "hash_2f78c43c4879",
+    "device_id": "device-workstation-01",
+    "result": "accepted",
+    "token_family": "family-logout-42",
+    "country": "US",
+    "user_agent_family": "Firefox",
+    "endpoint": "/api/v1/projects"
+  },
+  {
+    "event_id": "evt-logout-003",
+    "event_type": "logout",
+    "time": "2026-08-16T10:15:00Z",
+    "user_id": "user-synthetic-03",
+    "token_hash": "hash_19aa6e0d7451",
+    "ip_hash": "hash_2f78c43c4879",
+    "device_id": "device-workstation-01",
+    "result": "accepted",
+    "token_family": "family-logout-42",
+    "country": "US",
+    "user_agent_family": "Firefox",
+    "endpoint": "/api/auth/logout"
+  },
+  {
+    "event_id": "evt-logout-004",
+    "event_type": "token_used",
+    "time": "2026-08-16T10:16:00Z",
+    "user_id": "user-synthetic-03",
+    "token_hash": "hash_19aa6e0d7451",
+    "ip_hash": "hash_2f78c43c4879",
+    "device_id": "device-workstation-01",
+    "result": "rejected",
+    "token_family": "family-logout-42",
+    "country": "US",
+    "user_agent_family": "Firefox",
+    "endpoint": "/api/v1/projects"
+  }
+]

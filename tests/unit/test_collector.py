@@ -145,3 +145,26 @@ def test_ingest_raw_credentials_rejection_bearer(client):
 def test_non_json_payload(client):
     response = client.post("/events", data="not-json", headers={"Content-Type": "application/json"})
     assert response.status_code == 400
+
+def test_ingest_duplicate_event_idempotency(client):
+    valid_event = {
+        "event_id": "evt-dup-1",
+        "event_type": "token_issued",
+        "time": "2026-08-07T12:20:00Z",
+        "user_id": "user-99",
+        "token_hash": "a4d3b8f1c29e",
+        "token_family": "family-xyz",
+        "ip_hash": "f3b29c9e8d1a",
+        "device_id": "device-macos-1",
+        "result": "accepted"
+    }
+    # First submission
+    res1 = client.post("/events", json=valid_event)
+    assert res1.status_code == 201
+    assert res1.get_json()["status"] == "event persisted"
+
+    # Second submission with same event_id
+    res2 = client.post("/events", json=valid_event)
+    assert res2.status_code == 200
+    assert res2.get_json()["status"] == "event already exists"
+

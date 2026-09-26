@@ -70,9 +70,10 @@ class TokenFamilyCorrelator:
             if parent_token_hash in self.tokens:
                 parent = self.tokens[parent_token_hash]
                 family_id = parent.token_family
-                parent.status = TokenStatus.ROTATED
-                parent.rotated_at = time
-                parent.superseded_by = token_hash
+                if not parent.is_rotated:
+                    parent.status = TokenStatus.ROTATED
+                    parent.rotated_at = time
+                    parent.superseded_by = token_hash
             else:
                 # Parent was not observed earlier; provisionally register it
                 family_id = event_token_family or f"family-{uuid.uuid4().hex[:8]}"
@@ -280,10 +281,11 @@ class TokenFamilyCorrelator:
                 parent = db_session.query(TokenFamilyMember).filter(TokenFamilyMember.token_hash == parent_token_hash).first()
                 if parent:
                     family_id = parent.token_family
-                    parent.is_rotated = True
-                    parent.rotated_at = time
-                    parent.superseded_by = token_hash
-                    db_session.add(parent)
+                    if not parent.is_rotated:
+                        parent.is_rotated = True
+                        parent.rotated_at = time
+                        parent.superseded_by = token_hash
+                        db_session.add(parent)
                 else:
                     family_id = event_token_family or f"family-{uuid.uuid4().hex[:8]}"
                     parent = TokenFamilyMember(

@@ -1,5 +1,5 @@
 import os
-from sqlalchemy import create_engine, Column, String, Boolean, Integer
+from sqlalchemy import create_engine, Column, String, Boolean, Integer, event
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 Base = declarative_base()
@@ -58,6 +58,11 @@ def get_engine():
         _cached_url = db_url
         if db_url.startswith("sqlite"):
             _engine = create_engine(db_url, connect_args={"check_same_thread": False})
+            @event.listens_for(_engine, "connect")
+            def set_sqlite_pragma(dbapi_connection, connection_record):
+                cursor = dbapi_connection.cursor()
+                cursor.execute("PRAGMA journal_mode = MEMORY")
+                cursor.close()
         else:
             _engine = create_engine(db_url)
         _SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_engine)
@@ -73,6 +78,10 @@ def init_db():
 def insert_event(event_data):
     db = get_session()
     try:
+        existing = db.query(Event).filter(Event.event_id == event_data["event_id"]).first()
+        if existing:
+            return existing, False
+
         db_event = Event(
             event_id=event_data["event_id"],
             event_type=event_data["event_type"],
@@ -90,8 +99,10 @@ def insert_event(event_data):
         )
         db.add(db_event)
         db.commit()
+        return db_event, True
     except Exception as e:
         db.rollback()
         raise e
     finally:
         db.close()
+

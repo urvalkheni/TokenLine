@@ -83,13 +83,19 @@ def ingest_event():
 
     # Store event in the database
     try:
-        insert_event(data)
+        res = insert_event(data)
+        if isinstance(res, tuple):
+            db_event, created = res
+        else:
+            db_event, created = res, True
+
         # Correlate token families in real-time
-        db_sess = get_session()
-        try:
-            process_event(data, db_sess)
-        finally:
-            db_sess.close()
+        if created:
+            db_sess = get_session()
+            try:
+                process_event(data, db_sess)
+            finally:
+                db_sess.close()
     except Exception as e:
         # Prevent database exceptions from crashing the service
         return jsonify({
@@ -97,7 +103,7 @@ def ingest_event():
             "message": "Failed to store event in the database"
         }), 500
 
-    return jsonify({"status": "event persisted"}), 201
+    return jsonify({"status": "event persisted" if created else "event already exists"}), 201 if created else 200
 
 # --- READ-ONLY API ROUTES FOR FRONTEND & CLIENTS ---
 
