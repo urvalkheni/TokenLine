@@ -516,4 +516,36 @@ def test_revoked_tokens_cannot_transition_to_active(correlator):
     assert correlator.tokens["tok-bob-1"].status != TokenStatus.ACTIVE
 
 
+def test_correlator_engine_db_sync_error_handling(correlator, caplog):
+    import logging
+    from unittest.mock import MagicMock
+
+    mock_session = MagicMock()
+    mock_session.query.return_value.filter.return_value.first.return_value = None
+    mock_session.commit.side_effect = RuntimeError("Database disk failure during sync")
+
+    event = {
+        "event_id": "e-fail-sync",
+        "event_type": "token_issued",
+        "time": "2026-09-01T10:00:00Z",
+        "user_id": "u-sync",
+        "token_hash": "tok-sync-1",
+        "token_family": "fam-sync-1",
+        "ip_hash": "ip-sync",
+        "device_id": "dev-sync",
+        "result": "accepted"
+    }
+
+    with caplog.at_level(logging.ERROR, logger="tokenline.correlator.engine"):
+        with pytest.raises(RuntimeError, match="Database disk failure during sync"):
+            correlator.process_event(event, db_session=mock_session)
+
+    # Verify rollback was called and error was logged (no silent except: pass)
+    mock_session.rollback.assert_called()
+    assert "Database synchronization failed during correlation for event e-fail-sync" in caplog.text
+    assert "Database disk failure during sync" in caplog.text
+
+
+
+
 

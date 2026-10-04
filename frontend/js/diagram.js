@@ -42,7 +42,7 @@ class TokenChainDiagram {
     this.tokens = tokens || [];
     this.familyId = familyId;
 
-    this.container.innerHTML = '';
+    this.container.textContent = '';
     const wrapper = document.createElement('div');
     wrapper.className = `chain-diagram-container ${this.size === 'small' ? 'chain-diagram-small' : ''}`;
 
@@ -50,7 +50,10 @@ class TokenChainDiagram {
     chainWrap.className = 'chain-diagram';
 
     if (this.tokens.length === 0) {
-      chainWrap.innerHTML = `<span style="color: var(--text-muted); font-size: 0.8125rem;">No tokens in family</span>`;
+      const emptySpan = document.createElement('span');
+      emptySpan.style.cssText = 'color: var(--text-muted); font-size: 0.8125rem;';
+      emptySpan.textContent = 'No tokens in family';
+      chainWrap.appendChild(emptySpan);
       wrapper.appendChild(chainWrap);
       this.container.appendChild(wrapper);
       return;
@@ -72,13 +75,28 @@ class TokenChainDiagram {
       const hashShort = tok.token_hash.length > 12 ? tok.token_hash.slice(0, 10) + '..' : tok.token_hash;
       const statusIcon = tok.status === 'reused' ? '!' : (tok.status === 'rotated' ? '↻' : '✓');
 
-      node.innerHTML = `
-        <div class="node-pill">
-          <span class="node-icon">${statusIcon}</span>
-          <span class="token-hash">${hashShort}</span>
-        </div>
-        ${this.size === 'full' ? `<span style="font-size: 0.6875rem; color: var(--text-muted); font-family: var(--font-mono);">${tok.status}</span>` : ''}
-      `;
+      node.textContent = '';
+      const pill = document.createElement('div');
+      pill.className = 'node-pill';
+
+      const iconSpan = document.createElement('span');
+      iconSpan.className = 'node-icon';
+      iconSpan.textContent = statusIcon;
+
+      const hashSpan = document.createElement('span');
+      hashSpan.className = 'token-hash';
+      hashSpan.textContent = hashShort;
+
+      pill.appendChild(iconSpan);
+      pill.appendChild(hashSpan);
+      node.appendChild(pill);
+
+      if (this.size === 'full') {
+        const statusSpan = document.createElement('span');
+        statusSpan.style.cssText = 'font-size: 0.6875rem; color: var(--text-muted); font-family: var(--font-mono);';
+        statusSpan.textContent = tok.status || '';
+        node.appendChild(statusSpan);
+      }
 
       // Node interaction
       node.addEventListener('click', () => {
@@ -104,7 +122,7 @@ class TokenChainDiagram {
         const isDangerEdge = nextTok.status === 'reused' || tok.status === 'reused';
         const edge = document.createElement('div');
         edge.className = `chain-edge ${isDangerEdge ? 'edge-danger' : ''}`;
-        edge.innerHTML = `→`;
+        edge.textContent = '→';
         chainWrap.appendChild(edge);
       }
     });
@@ -160,55 +178,82 @@ class TokenChainDiagram {
 
     const badgeClass = tok.status === 'reused' ? 'badge-reused' : (tok.status === 'rotated' ? 'badge-rotated' : 'badge-active');
 
-    let reuseHtml = '';
-    if (tok.status === 'reused' || tok.reuse_details) {
-      const reusedAt = (tok.reuse_details && tok.reuse_details.reused_at) || tok.rotated_at || 'Recently';
-      const evtId = (tok.reuse_details && tok.reuse_details.attempted_event_id) || 'N/A';
-      reuseHtml = `
-        <div style="background-color: rgba(255, 59, 59, 0.1); border: 1px solid rgba(255, 59, 59, 0.3); border-radius: var(--radius-md); padding: var(--space-4);">
-          <div style="color: var(--danger-red); font-weight: 700; margin-bottom: 6px; display: flex; align-items: center; gap: 6px;">
-            <span>⚠️</span> Token Reuse Detected
-          </div>
-          <div style="font-size: 0.8125rem; color: var(--text-secondary); line-height: 1.5;">
-            This token was previously rotated, but was subsequently presented again in event <code class="mono">${evtId}</code> at <span class="timestamp">${reusedAt}</span>.
-          </div>
-        </div>
-      `;
-    }
-
     if (drawerContent) {
-      drawerContent.innerHTML = `
-        ${reuseHtml}
-        <div class="drawer-field">
-          <span class="drawer-field-label">Status</span>
-          <div><span class="badge ${badgeClass}">${tok.status}</span></div>
-        </div>
-        <div class="drawer-field">
-          <span class="drawer-field-label">Token Family</span>
-          <span class="drawer-field-val mono">${tok.token_family || this.familyId}</span>
-        </div>
-        <div class="drawer-field">
-          <span class="drawer-field-label">Parent Token Hash</span>
-          <span class="drawer-field-val mono">${tok.parent_token_hash || 'None (Root Token)'}</span>
-        </div>
-        <div class="drawer-field">
-          <span class="drawer-field-label">Superseded By (Child)</span>
-          <span class="drawer-field-val mono">${tok.superseded_by || 'None (Active Leaf)'}</span>
-        </div>
-        <div class="drawer-field">
-          <span class="drawer-field-label">User ID</span>
-          <span class="drawer-field-val mono">${tok.user_id || 'synthetic-user'}</span>
-        </div>
-        <div class="drawer-field">
-          <span class="drawer-field-label">Issued / Observed Time</span>
-          <span class="drawer-field-val timestamp">${tok.issued_at || tok.time || 'N/A'}</span>
-        </div>
-        ${tok.rotated_at ? `
-        <div class="drawer-field">
-          <span class="drawer-field-label">Rotated At</span>
-          <span class="drawer-field-val timestamp">${tok.rotated_at}</span>
-        </div>` : ''}
-      `;
+      drawerContent.textContent = '';
+
+      if (tok.status === 'reused' || tok.reuse_details) {
+        const reusedAt = (tok.reuse_details && tok.reuse_details.reused_at) || tok.rotated_at || 'Recently';
+        const evtId = (tok.reuse_details && tok.reuse_details.attempted_event_id) || 'N/A';
+
+        const alertBox = document.createElement('div');
+        alertBox.style.cssText = 'background-color: rgba(255, 59, 59, 0.1); border: 1px solid rgba(255, 59, 59, 0.3); border-radius: var(--radius-md); padding: var(--space-4); margin-bottom: 16px;';
+
+        const alertTitle = document.createElement('div');
+        alertTitle.style.cssText = 'color: var(--danger-red); font-weight: 700; margin-bottom: 6px; display: flex; align-items: center; gap: 6px;';
+        const warnIcon = document.createElement('span');
+        warnIcon.textContent = '⚠️';
+        alertTitle.appendChild(warnIcon);
+        alertTitle.appendChild(document.createTextNode(' Token Reuse Detected'));
+        alertBox.appendChild(alertTitle);
+
+        const alertDesc = document.createElement('div');
+        alertDesc.style.cssText = 'font-size: 0.8125rem; color: var(--text-secondary); line-height: 1.5;';
+        alertDesc.appendChild(document.createTextNode('This token was previously rotated, but was subsequently presented again in event '));
+
+        const evtCode = document.createElement('code');
+        evtCode.className = 'mono';
+        evtCode.textContent = evtId;
+        alertDesc.appendChild(evtCode);
+
+        alertDesc.appendChild(document.createTextNode(' at '));
+
+        const timeSpan = document.createElement('span');
+        timeSpan.className = 'timestamp';
+        timeSpan.textContent = reusedAt;
+        alertDesc.appendChild(timeSpan);
+
+        alertDesc.appendChild(document.createTextNode('.'));
+        alertBox.appendChild(alertDesc);
+
+        drawerContent.appendChild(alertBox);
+      }
+
+      const addDrawerField = (label, value, valClass = 'mono', isBadge = false) => {
+        const fieldDiv = document.createElement('div');
+        fieldDiv.className = 'drawer-field';
+
+        const labelSpan = document.createElement('span');
+        labelSpan.className = 'drawer-field-label';
+        labelSpan.textContent = label;
+        fieldDiv.appendChild(labelSpan);
+
+        if (isBadge) {
+          const badgeWrap = document.createElement('div');
+          const badge = document.createElement('span');
+          badge.className = `badge ${badgeClass}`;
+          badge.textContent = value || '';
+          badgeWrap.appendChild(badge);
+          fieldDiv.appendChild(badgeWrap);
+        } else {
+          const valSpan = document.createElement('span');
+          valSpan.className = `drawer-field-val ${valClass}`;
+          valSpan.textContent = value || '';
+          fieldDiv.appendChild(valSpan);
+        }
+
+        drawerContent.appendChild(fieldDiv);
+      };
+
+      addDrawerField('Status', tok.status, '', true);
+      addDrawerField('Token Family', tok.token_family || this.familyId);
+      addDrawerField('Parent Token Hash', tok.parent_token_hash || 'None (Root Token)');
+      addDrawerField('Superseded By (Child)', tok.superseded_by || 'None (Active Leaf)');
+      addDrawerField('User ID', tok.user_id || 'synthetic-user');
+      addDrawerField('Issued / Observed Time', tok.issued_at || tok.time || 'N/A', 'timestamp');
+
+      if (tok.rotated_at) {
+        addDrawerField('Rotated At', tok.rotated_at, 'timestamp');
+      }
     }
 
     this.drawerBackdrop.classList.add('open');
