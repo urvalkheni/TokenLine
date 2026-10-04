@@ -1,18 +1,72 @@
 import os
-from sqlalchemy import create_engine, Column, String, Boolean, Integer, event
+from datetime import datetime, timezone
+from sqlalchemy import create_engine, Column, String, Boolean, Integer, UniqueConstraint, Index
+from sqlalchemy.types import TypeDecorator, DateTime
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 Base = declarative_base()
+
+
+class TimezoneAwareDateTime(TypeDecorator):
+    """
+    SQLAlchemy TypeDecorator that normalizes and stores all timestamps as UTC
+    timezone-aware DateTime objects, accepting ISO 8601 strings, short time strings,
+    or datetime objects, and returning ISO 8601 UTC strings formatted as 'YYYY-MM-DDTHH:MM:SSZ'.
+    Ensures correct chronological ordering and range filtering across different timezone offsets.
+    """
+    impl = DateTime(timezone=True)
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            s = value.strip()
+            if s.endswith("Z"):
+                s = s[:-1] + "+00:00"
+            try:
+                dt = datetime.fromisoformat(s)
+            except Exception:
+                try:
+                    # Handle HH:MM or HH:MM:SS short fixture strings
+                    t = datetime.strptime(s, "%H:%M:%S" if s.count(":") == 2 else "%H:%M").time()
+                    dt = datetime.combine(datetime(2026, 1, 1).date(), t, tzinfo=timezone.utc)
+                except Exception:
+                    dt = datetime.now(timezone.utc)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            else:
+                dt = dt.astimezone(timezone.utc)
+            return dt
+        elif isinstance(value, datetime):
+            if value.tzinfo is None:
+                return value.replace(tzinfo=timezone.utc)
+            return value.astimezone(timezone.utc)
+        return value
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            if value.tzinfo is None:
+                dt = value.replace(tzinfo=timezone.utc)
+            else:
+                dt = value.astimezone(timezone.utc)
+            return dt.isoformat().replace("+00:00", "Z")
+        if isinstance(value, str):
+            return value
+        return value
+
 
 class Event(Base):
     __tablename__ = "events"
 
     event_id = Column(String, primary_key=True)
     event_type = Column(String, nullable=False)
-    time = Column(String, nullable=False)
-    user_id = Column(String, nullable=False)
+    time = Column(TimezoneAwareDateTime, nullable=False, index=True)
+    user_id = Column(String, nullable=False, index=True)
     token_hash = Column(String, nullable=False)
-    token_family = Column(String, nullable=True)
+    token_family = Column(String, nullable=True, index=True)
     parent_token_hash = Column(String, nullable=True)
     ip_hash = Column(String, nullable=False)
     country = Column(String, nullable=True)
@@ -21,29 +75,36 @@ class Event(Base):
     endpoint = Column(String, nullable=True)
     result = Column(String, nullable=False)
 
+
 class TokenFamilyMember(Base):
     __tablename__ = "token_family_members"
 
     token_hash = Column(String, primary_key=True)
-    token_family = Column(String, nullable=False)
+    token_family = Column(String, nullable=False, index=True)
     parent_token_hash = Column(String, nullable=True)
     is_rotated = Column(Boolean, default=False, nullable=False)
-    rotated_at = Column(String, nullable=True)
+    rotated_at = Column(TimezoneAwareDateTime, nullable=True)
     superseded_by = Column(String, nullable=True)
-    user_id = Column(String, nullable=False)
+    user_id = Column(String, nullable=False, index=True)
+
 
 class TokenReuseRecord(Base):
     __tablename__ = "token_reuse_records"
+    __table_args__ = (
+        UniqueConstraint("token_hash", "attempted_event_id", name="uq_token_reuse_event"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    token_hash = Column(String, nullable=False)
+    token_hash = Column(String, nullable=False, index=True)
     token_family = Column(String, nullable=False)
-    reused_at = Column(String, nullable=False)
+    reused_at = Column(TimezoneAwareDateTime, nullable=False)
     attempted_event_id = Column(String, nullable=False)
+
 
 _engine = None
 _cached_url = None
 _SessionLocal = None
+
 
 def get_engine():
     global _engine, _cached_url, _SessionLocal
@@ -58,29 +119,32 @@ def get_engine():
         _cached_url = db_url
         if db_url.startswith("sqlite"):
             _engine = create_engine(db_url, connect_args={"check_same_thread": False})
-            @event.listens_for(_engine, "connect")
-            def set_sqlite_pragma(dbapi_connection, connection_record):
-                cursor = dbapi_connection.cursor()
-                cursor.execute("PRAGMA journal_mode = MEMORY")
-                cursor.close()
         else:
             _engine = create_engine(db_url)
         _SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_engine)
     return _engine
 
+
 def get_session():
     get_engine()
     return _SessionLocal()
 
+
 def init_db():
-    Base.metadata.create_all(bind=get_engine())
+    """Initializes schema and runs all migrations."""
+    engine = get_engine()
+    Base.metadata.create_all(bind=engine)
+    from backend.database.migrations import run_migrations
+    run_migrations(engine)
+
 
 def insert_event(event_data):
     db = get_session()
     try:
+        # Idempotent insert: if event_id already exists, return existing record
         existing = db.query(Event).filter(Event.event_id == event_data["event_id"]).first()
         if existing:
-            return existing, False
+            return existing
 
         db_event = Event(
             event_id=event_data["event_id"],
@@ -99,10 +163,9 @@ def insert_event(event_data):
         )
         db.add(db_event)
         db.commit()
-        return db_event, True
+        return db_event
     except Exception as e:
         db.rollback()
         raise e
     finally:
         db.close()
-

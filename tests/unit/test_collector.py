@@ -4,11 +4,9 @@ import pytest
 import tempfile
 import json
 
-# Add collector directory to path
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "backend", "collector"))
+from backend.collector.app import app
+from backend.collector.db import init_db, get_session, Event
 
-from app import app
-from db import init_db, get_session, Event
 
 @pytest.fixture
 def client():

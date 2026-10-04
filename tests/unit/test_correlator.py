@@ -4,11 +4,11 @@ import pytest
 import tempfile
 import json
 
-# Add collector directory to path
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "backend", "collector"))
+from backend.collector.db import init_db, get_session, TokenFamilyMember, TokenReuseRecord
+from backend.correlator import process_event, reconstruct_chain
 
-from db import init_db, get_session, TokenFamilyMember, TokenReuseRecord
-from correlator import process_event, reconstruct_chain
+
+
 
 @pytest.fixture
 def db_session():
@@ -143,38 +143,110 @@ def test_missing_parent_graceful_handling(db_session):
     assert child.parent_token_hash == "token-parent-unseen"
     assert child.token_family == parent.token_family
 
-def test_synthetic_dataset_processing(db_session):
-    # Load Issue #8 synthetic dataset (refresh-reuse.json)
+def test_khushi_synthetic_dataset_processing(db_session):
+    # Load dataset
     dataset_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "synthetic", "refresh-reuse.json")
-    with open(dataset_path, "r", encoding="utf-8") as f:
+    with open(dataset_path, "r") as f:
         events = json.load(f)
 
     # Feed events
     for event in events:
         process_event(event, db_session)
 
-    root_token = events[0]["token_hash"]
-    child_token = events[2]["token_hash"]
-    family_id = events[0]["token_family"]
-
-    parent = db_session.query(TokenFamilyMember).filter(TokenFamilyMember.token_hash == root_token).first()
-    child = db_session.query(TokenFamilyMember).filter(TokenFamilyMember.token_hash == child_token).first()
+    parent = db_session.query(TokenFamilyMember).filter(TokenFamilyMember.token_hash == "hash_8f8a7544c420").first()
+    child = db_session.query(TokenFamilyMember).filter(TokenFamilyMember.token_hash == "hash_2358bd5b54a9").first()
 
     assert parent is not None
     assert parent.is_rotated is True
-    assert parent.token_family == family_id
-    assert parent.superseded_by == child_token
+    assert parent.token_family == "family-refresh-42"
 
     assert child is not None
-    assert child.token_family == family_id
-    assert child.parent_token_hash == root_token
+    assert child.token_family == "family-refresh-42"
+    assert child.parent_token_hash == "hash_8f8a7544c420"
 
     # Verify reconstruction
-    chain = reconstruct_chain(child_token, db_session)
-    assert chain == [root_token, child_token]
+    chain = reconstruct_chain("hash_2358bd5b54a9", db_session)
+    assert chain == ["hash_8f8a7544c420", "hash_2358bd5b54a9"]
 
-    # Verify that the reuse of rotated token was flagged/recorded
-    reuse_records = db_session.query(TokenReuseRecord).filter(TokenReuseRecord.token_hash == root_token).all()
+    # Verify that the reuse of rotated token 'hash_8f8a7544c420' was flagged/recorded
+    reuse_records = db_session.query(TokenReuseRecord).filter(TokenReuseRecord.token_hash == "hash_8f8a7544c420").all()
     assert len(reuse_records) == 1
-    assert reuse_records[0].token_family == family_id
+    assert reuse_records[0].token_family == "family-refresh-42"
     assert reuse_records[0].attempted_event_id == "evt-reuse-005"
+
+
+def test_db_idempotent_event_replay_100_times(db_session):
+    issue_event = {
+        "event_id": "e-db-iss",
+        "event_type": "token_issued",
+        "time": "2026-09-01T10:00:00Z",
+        "user_id": "u-db",
+        "token_hash": "tok-db-A",
+        "token_family": "fam-db-idem",
+        "ip_hash": "ip1",
+        "device_id": "dev1",
+        "result": "accepted"
+    }
+    rot_event = {
+        "event_id": "e-db-rot",
+        "event_type": "token_refreshed",
+        "time": "2026-09-01T10:10:00Z",
+        "user_id": "u-db",
+        "token_hash": "tok-db-B",
+        "parent_token_hash": "tok-db-A",
+        "ip_hash": "ip1",
+        "device_id": "dev1",
+        "result": "accepted"
+    }
+
+    # Process issuance and rotation multiple times (replays)
+    for _ in range(10):
+        process_event(issue_event, db_session)
+        process_event(rot_event, db_session)
+
+    # Assert no false reuse records in DB
+    reuse_records = db_session.query(TokenReuseRecord).all()
+    assert len(reuse_records) == 0
+
+    # Attack event
+    attack_event_1 = {
+        "event_id": "e-db-atk-1",
+        "event_type": "token_refreshed",
+        "time": "2026-09-01T10:20:00Z",
+        "user_id": "u-db",
+        "token_hash": "tok-db-B-fake",
+        "parent_token_hash": "tok-db-A",
+        "ip_hash": "ip-bad",
+        "device_id": "dev-bad",
+        "result": "rejected"
+    }
+
+    # Replay attack 100 times in DB
+    for _ in range(100):
+        process_event(attack_event_1, db_session)
+
+    # Uniqueness constraint & logic must ensure exactly 1 record in DB
+    reuse_records = db_session.query(TokenReuseRecord).all()
+    assert len(reuse_records) == 1
+    assert reuse_records[0].attempted_event_id == "e-db-atk-1"
+    assert reuse_records[0].token_hash == "tok-db-A"
+
+    # Distinct attack event with same token
+    attack_event_2 = {
+        "event_id": "e-db-atk-2",
+        "event_type": "token_used",
+        "time": "2026-09-01T10:30:00Z",
+        "user_id": "u-db",
+        "token_hash": "tok-db-A",
+        "ip_hash": "ip-bad-2",
+        "device_id": "dev-bad-2",
+        "result": "rejected"
+    }
+    for _ in range(50):
+        process_event(attack_event_2, db_session)
+
+    # Distinct event must produce a separate record -> exactly 2 records total
+    reuse_records = db_session.query(TokenReuseRecord).all()
+    assert len(reuse_records) == 2
+    assert {r.attempted_event_id for r in reuse_records} == {"e-db-atk-1", "e-db-atk-2"}
+

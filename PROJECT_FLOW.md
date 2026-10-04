@@ -51,7 +51,8 @@ sequenceDiagram
     2.  **Schema Validation:** Validates the payload structure against the JSON schema defined in [`event.schema.json`](file:///d:/5sem/TokenLine/TokenLine/schema/event.schema.json).
     3.  **Security Sanitization:** Inspects the request using `contains_raw_credentials()`. If a raw JWT token pattern or Authorization Bearer header is discovered in the payload, the server rejects the request immediately with a `400 Bad Request` to prevent sensitive credentials leakage in logs.
     4.  **Database Storage:** Stores the event in SQLite.
-    5.  **Real-Time Correlation & Detection:** Invokes the correlator script [`correlator.py`](file:///d:/5sem/TokenLine/TokenLine/backend/collector/correlator.py) to update the token lineage trees and flags security anomalies.
+    5.  **Real-Time Correlation & Detection:** Invokes the unified correlator engine [`engine.py`](file:///d:/5sem/TokenLine/TokenLine/backend/correlator/engine.py) to update the token lineage trees and flags security anomalies.
+
 
 ---
 
