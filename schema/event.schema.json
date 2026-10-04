@@ -4,7 +4,8 @@
   "type": "object",
   "properties": {
     "event_id": {
-      "type": "string"
+      "type": "string",
+      "maxLength": 128
     },
     "event_type": {
       "type": "string",
@@ -18,40 +19,55 @@
         "refresh_reuse_detected",
         "suspicious_location",
         "suspicious_device",
-        "replay_detected"
+        "replay_detected",
+        "login_failed",
+        "token_rejected"
       ]
     },
     "time": {
       "type": "string",
-      "format": "date-time"
+      "format": "date-time",
+      "maxLength": 64
     },
     "user_id": {
-      "type": "string"
+      "type": "string",
+      "maxLength": 128
     },
     "token_hash": {
-      "type": "string"
+      "type": "string",
+      "pattern": "^(hash_)?[0-9a-fA-F]{12,64}$",
+      "maxLength": 128
     },
     "token_family": {
-      "type": "string"
+      "type": "string",
+      "maxLength": 128
     },
     "parent_token_hash": {
-      "type": "string"
+      "type": ["string", "null"],
+      "pattern": "^(hash_)?[0-9a-fA-F]{12,64}$",
+      "maxLength": 128
     },
     "ip_hash": {
-      "type": "string"
+      "type": "string",
+      "pattern": "^(hash_)?[0-9a-fA-F]{12,64}$",
+      "maxLength": 128
     },
     "country": {
       "type": "string",
-      "pattern": "^[A-Z]{2}$"
+      "pattern": "^[A-Z]{2}$",
+      "maxLength": 2
     },
     "device_id": {
-      "type": "string"
+      "type": "string",
+      "maxLength": 128
     },
     "user_agent_family": {
-      "type": "string"
+      "type": "string",
+      "maxLength": 128
     },
     "endpoint": {
-      "type": "string"
+      "type": "string",
+      "maxLength": 512
     },
     "result": {
       "type": "string",

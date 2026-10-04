@@ -127,6 +127,14 @@ def upgrade_002(conn, engine):
     # 3. Index & Uniqueness constraint on token_reuse_records
     conn.execute(text("CREATE INDEX IF NOT EXISTS ix_token_reuse_records_token_hash ON token_reuse_records (token_hash)"))
     conn.execute(text("""
+        DELETE FROM token_reuse_records 
+        WHERE id NOT IN (
+            SELECT MIN(id) 
+            FROM token_reuse_records 
+            GROUP BY token_hash, attempted_event_id
+        )
+    """))
+    conn.execute(text("""
         CREATE UNIQUE INDEX IF NOT EXISTS uq_token_reuse_event 
         ON token_reuse_records (token_hash, attempted_event_id)
     """))

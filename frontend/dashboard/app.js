@@ -234,24 +234,48 @@ async function loadDashboardData() {
   document.getElementById('metric-sessions').textContent = sessionsCount;
 
   // Render recent activity feed
-  eventFeedTable.innerHTML = '';
+  eventFeedTable.textContent = '';
   events.slice(-8).reverse().forEach(event => {
     const tr = document.createElement('tr');
     
     // Severity mapping
     let pillClass = 'success';
-    if (event.result === 'rejected' || event.event_type.includes('reuse') || event.event_type.includes('replay') || event.event_type.includes('suspicious')) {
+    if (event.result === 'rejected' || (event.event_type && (event.event_type.includes('reuse') || event.event_type.includes('replay') || event.event_type.includes('suspicious')))) {
       pillClass = 'danger';
     }
 
-    tr.innerHTML = `
-      <td><span class="pill ${pillClass}">${event.event_type.replace(/_/g, ' ')}</span></td>
-      <td>${formatDate(event.time)}</td>
-      <td><strong>${event.user_id}</strong></td>
-      <td class="code-font">${maskToken(event.token_hash)}</td>
-      <td><span class="code-font">${event.ip_hash}</span></td>
-      <td>${event.result === 'accepted' ? '🟢 Accepted' : '🔴 Rejected'}</td>
-    `;
+    const tdType = document.createElement('td');
+    const pill = document.createElement('span');
+    pill.className = `pill ${pillClass}`;
+    pill.textContent = (event.event_type || '').replace(/_/g, ' ');
+    tdType.appendChild(pill);
+    tr.appendChild(tdType);
+
+    const tdTime = document.createElement('td');
+    tdTime.textContent = formatDate(event.time);
+    tr.appendChild(tdTime);
+
+    const tdUser = document.createElement('td');
+    const userStrong = document.createElement('strong');
+    userStrong.textContent = event.user_id || '';
+    tdUser.appendChild(userStrong);
+    tr.appendChild(tdUser);
+
+    const tdToken = document.createElement('td');
+    tdToken.className = 'code-font';
+    tdToken.textContent = maskToken(event.token_hash);
+    tr.appendChild(tdToken);
+
+    const tdIp = document.createElement('td');
+    const ipSpan = document.createElement('span');
+    ipSpan.className = 'code-font';
+    ipSpan.textContent = event.ip_hash || '';
+    tdIp.appendChild(ipSpan);
+    tr.appendChild(tdIp);
+
+    const tdRes = document.createElement('td');
+    tdRes.textContent = event.result === 'accepted' ? '🟢 Accepted' : '🔴 Rejected';
+    tr.appendChild(tdRes);
 
     tr.style.cursor = 'pointer';
     tr.addEventListener('click', () => {
@@ -271,8 +295,14 @@ async function renderTimelineForToken(tokenHash) {
   // Find the family for this token
   const currentEvent = events.find(e => e.token_hash === tokenHash || e.parent_token_hash === tokenHash);
   if (!currentEvent) {
-    document.getElementById('timeline-flow-container').innerHTML = '<p class="placeholder-text">Token ID not found in database logs.</p>';
-    document.getElementById('family-tree-nodes').innerHTML = '';
+    const flowContainer = document.getElementById('timeline-flow-container');
+    flowContainer.textContent = '';
+    const placeholderP = document.createElement('p');
+    placeholderP.className = 'placeholder-text';
+    placeholderP.textContent = 'Token ID not found in database logs.';
+    flowContainer.appendChild(placeholderP);
+
+    document.getElementById('family-tree-nodes').textContent = '';
     return;
   }
   const familyId = currentEvent.token_family;
@@ -282,7 +312,7 @@ async function renderTimelineForToken(tokenHash) {
 
   // Render vertical timeline nodes
   const flowContainer = document.getElementById('timeline-flow-container');
-  flowContainer.innerHTML = '';
+  flowContainer.textContent = '';
 
   familyEvents.forEach(event => {
     const isAnomaly = event.result === 'rejected' || event.event_type.includes('reuse') || event.event_type.includes('suspicious');
@@ -291,27 +321,47 @@ async function renderTimelineForToken(tokenHash) {
     const node = document.createElement('div');
     node.className = `timeline-node ${nodeClass}`;
     
-    node.innerHTML = `
-      <div class="timeline-marker"></div>
-      <div class="timeline-card">
-        <div class="timeline-node-header">
-          <h4>${event.event_type.replace(/_/g, ' ').toUpperCase()}</h4>
-          <span class="timeline-time">${formatDate(event.time)}</span>
-        </div>
-        <p>Token ID: <span class="code-font">${maskToken(event.token_hash)}</span> (${event.user_id})</p>
-      </div>
-    `;
+    const marker = document.createElement('div');
+    marker.className = 'timeline-marker';
+    node.appendChild(marker);
 
-    node.querySelector('.timeline-card').addEventListener('click', () => {
+    const card = document.createElement('div');
+    card.className = 'timeline-card';
+
+    const header = document.createElement('div');
+    header.className = 'timeline-node-header';
+
+    const h4 = document.createElement('h4');
+    h4.textContent = (event.event_type || '').replace(/_/g, ' ').toUpperCase();
+    header.appendChild(h4);
+
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'timeline-time';
+    timeSpan.textContent = formatDate(event.time);
+    header.appendChild(timeSpan);
+
+    card.appendChild(header);
+
+    const p = document.createElement('p');
+    p.textContent = 'Token ID: ';
+    const codeSpan = document.createElement('span');
+    codeSpan.className = 'code-font';
+    codeSpan.textContent = maskToken(event.token_hash);
+    p.appendChild(codeSpan);
+    p.appendChild(document.createTextNode(` (${event.user_id || ''})`));
+    card.appendChild(p);
+
+    card.addEventListener('click', () => {
       showEventDetails(event);
     });
 
+    node.appendChild(card);
     flowContainer.appendChild(node);
   });
 
   // Render Token Family Linkage hierarchy
   const treeContainer = document.getElementById('family-tree-nodes');
-  treeContainer.innerHTML = '';
+  treeContainer.textContent = '';
 
   const uniqueTokens = Array.from(new Set(familyEvents.map(e => e.token_hash)));
   uniqueTokens.forEach(tHash => {
@@ -329,10 +379,17 @@ async function renderTimelineForToken(tokenHash) {
     }
 
     nodeDiv.className = `tree-node ${stateClass}`;
-    nodeDiv.innerHTML = `
-      <span>${maskToken(tHash)}</span>
-      <span class="badge offline">${label}</span>
-    `;
+    nodeDiv.textContent = '';
+
+    const tokenSpan = document.createElement('span');
+    tokenSpan.textContent = maskToken(tHash);
+    nodeDiv.appendChild(tokenSpan);
+
+    const badgeSpan = document.createElement('span');
+    badgeSpan.className = 'badge offline';
+    badgeSpan.textContent = label;
+    nodeDiv.appendChild(badgeSpan);
+
     treeContainer.appendChild(nodeDiv);
   });
 
@@ -356,21 +413,58 @@ function showEventDetails(event) {
     rationale = `DENIED: Access rejected because token expired at ${formatDate(event.time)}.`;
   }
 
-  detailPanel.innerHTML = `
-    <div style="display:flex; flex-direction:column; gap:12px;">
-      <div><strong>Event ID:</strong> <span class="code-font">${event.event_id}</span></div>
-      <div><strong>Action:</strong> <span class="pill ${event.result === 'accepted' ? 'success' : 'danger'}">${event.event_type}</span></div>
-      <div><strong>User:</strong> ${event.user_id}</div>
-      <div><strong>Endpoint:</strong> <span class="code-font">${event.endpoint}</span></div>
-      <div><strong>IP Hash:</strong> <span class="code-font">${event.ip_hash} (${event.country})</span></div>
-      <div><strong>User Agent:</strong> ${event.user_agent_family}</div>
-      <div><strong>Device ID:</strong> <span class="code-font">${event.device_id}</span></div>
-      <div style="margin-top:10px; border-top:1px solid var(--color-border); padding-top:10px;">
-        <strong>Detection Engine Evidence:</strong>
-        <p style="font-size:13px; margin-top:4px; opacity:0.8;">${rationale}</p>
-      </div>
-    </div>
-  `;
+  detailPanel.textContent = '';
+
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'display:flex; flex-direction:column; gap:12px;';
+
+  const addDetailRow = (label, val, isCode = false, isPill = false, extraText = '') => {
+    const row = document.createElement('div');
+    const strong = document.createElement('strong');
+    strong.textContent = label + ': ';
+    row.appendChild(strong);
+
+    if (isPill) {
+      const pill = document.createElement('span');
+      pill.className = `pill ${event.result === 'accepted' ? 'success' : 'danger'}`;
+      pill.textContent = val || '';
+      row.appendChild(pill);
+    } else if (isCode) {
+      const span = document.createElement('span');
+      span.className = 'code-font';
+      span.textContent = val || '';
+      row.appendChild(span);
+    } else {
+      row.appendChild(document.createTextNode(val || ''));
+    }
+
+    if (extraText) {
+      row.appendChild(document.createTextNode(extraText));
+    }
+    wrap.appendChild(row);
+  };
+
+  addDetailRow('Event ID', event.event_id, true);
+  addDetailRow('Action', event.event_type, false, true);
+  addDetailRow('User', event.user_id);
+  addDetailRow('Endpoint', event.endpoint, true);
+  addDetailRow('IP Hash', event.ip_hash, true, false, event.country ? ` (${event.country})` : '');
+  addDetailRow('User Agent', event.user_agent_family);
+  addDetailRow('Device ID', event.device_id, true);
+
+  const evidenceDiv = document.createElement('div');
+  evidenceDiv.style.cssText = 'margin-top:10px; border-top:1px solid var(--color-border); padding-top:10px;';
+  const evidenceStrong = document.createElement('strong');
+  evidenceStrong.textContent = 'Detection Engine Evidence:';
+  evidenceDiv.appendChild(evidenceStrong);
+
+  const evidenceP = document.createElement('p');
+  evidenceP.style.cssText = 'font-size:13px; margin-top:4px; opacity:0.8;';
+  evidenceP.textContent = rationale;
+  evidenceDiv.appendChild(evidenceP);
+
+  wrap.appendChild(evidenceDiv);
+  detailPanel.appendChild(wrap);
 }
 
 // --- 3. ALERTS VIEW & FILTERS ---
@@ -385,7 +479,7 @@ async function renderAlerts() {
   const typeFilter = document.getElementById('filter-type').value;
   const alertsTable = document.getElementById('alerts-table-body');
   
-  alertsTable.innerHTML = '';
+  alertsTable.textContent = '';
 
   // Extract alert events
   const alertEvents = events.filter(e => 
@@ -416,20 +510,61 @@ async function renderAlerts() {
       severityStyle = 'background-color: var(--color-danger-bg); color: var(--color-danger); border: 1px solid var(--color-danger); padding: 3px 9px; border-radius: 4px; display: inline-block;';
     }
 
-    tr.innerHTML = `
-      <td><span class="${severityClass}" style="${severityStyle}">${severity}</span></td>
-      <td><strong style="color:var(--color-danger);">${alert.event_type.replace(/_/g, ' ').toUpperCase()}</strong></td>
-      <td class="code-font">${maskToken(alert.token_hash)}</td>
-      <td>${formatDate(alert.time)}</td>
-      <td><span class="pill danger">active</span></td>
-      <td><button class="nav-item active" style="padding: 6px 12px; font-size:12px; border-radius:4px;" onclick="viewAlertToken('${alert.token_hash}')">Investigate</button></td>
-    `;
+    const tdSev = document.createElement('td');
+    const sevSpan = document.createElement('span');
+    sevSpan.className = severityClass;
+    sevSpan.style.cssText = severityStyle;
+    sevSpan.textContent = severity;
+    tdSev.appendChild(sevSpan);
+    tr.appendChild(tdSev);
+
+    const tdType = document.createElement('td');
+    const strongType = document.createElement('strong');
+    strongType.style.color = 'var(--color-danger)';
+    strongType.textContent = (alert.event_type || '').replace(/_/g, ' ').toUpperCase();
+    tdType.appendChild(strongType);
+    tr.appendChild(tdType);
+
+    const tdToken = document.createElement('td');
+    tdToken.className = 'code-font';
+    tdToken.textContent = maskToken(alert.token_hash);
+    tr.appendChild(tdToken);
+
+    const tdTime = document.createElement('td');
+    tdTime.textContent = formatDate(alert.time);
+    tr.appendChild(tdTime);
+
+    const tdStatus = document.createElement('td');
+    const statusPill = document.createElement('span');
+    statusPill.className = 'pill danger';
+    statusPill.textContent = 'active';
+    tdStatus.appendChild(statusPill);
+    tr.appendChild(tdStatus);
+
+    const tdBtn = document.createElement('td');
+    const btn = document.createElement('button');
+    btn.className = 'nav-item active';
+    btn.style.cssText = 'padding: 6px 12px; font-size:12px; border-radius:4px;';
+    btn.textContent = 'Investigate';
+    btn.addEventListener('click', () => {
+      viewAlertToken(alert.token_hash);
+    });
+    tdBtn.appendChild(btn);
+    tr.appendChild(tdBtn);
 
     alertsTable.appendChild(tr);
   });
 
   if (alertsTable.children.length === 0) {
-    alertsTable.innerHTML = '<tr><td colspan="6" class="placeholder-text" style="text-align:center;">No matching security alerts found.</td></tr>';
+    alertsTable.textContent = '';
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 6;
+    td.className = 'placeholder-text';
+    td.style.textAlign = 'center';
+    td.textContent = 'No matching security alerts found.';
+    tr.appendChild(td);
+    alertsTable.appendChild(tr);
   }
 }
 

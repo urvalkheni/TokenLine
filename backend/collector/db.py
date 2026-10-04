@@ -1,4 +1,5 @@
 import os
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from sqlalchemy import create_engine, Column, String, Boolean, Integer, UniqueConstraint, Index
 from sqlalchemy.types import TypeDecorator, DateTime
@@ -128,6 +129,19 @@ def get_engine():
 def get_session():
     get_engine()
     return _SessionLocal()
+
+
+@contextmanager
+def session_scope():
+    """Provide a safe transactional scope around a series of database operations."""
+    session = get_session()
+    try:
+        yield session
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
 
 def init_db():

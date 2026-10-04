@@ -202,28 +202,53 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const scenarios = await TokenDataService.getScenarios();
     if (scenarioCardsContainer) {
-      scenarioCardsContainer.innerHTML = scenarios.map(sc => `
-        <div class="card scenario-card" data-scenario-id="${sc.id}">
-          <div>
-            <div class="eyebrow">${sc.id.toUpperCase()}</div>
-            <h3 class="card-title" style="margin-bottom: 8px;">${sc.name}</h3>
-            <p style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 12px;">${sc.description}</p>
-            <div style="font-size: 0.75rem; color: var(--text-muted); font-family: var(--font-mono);">
-              Signal: <span style="color: var(--accent-cyan);">${sc.detection_signal}</span>
-            </div>
-          </div>
-          <button class="btn btn-primary run-scenario-btn" data-scenario="${sc.id}" style="width: 100%; margin-top: 12px;">
-            Run Scenario
-          </button>
-        </div>
-      `).join('');
+      scenarioCardsContainer.textContent = '';
+      scenarios.forEach(sc => {
+        const card = document.createElement('div');
+        card.className = 'card scenario-card';
+        card.setAttribute('data-scenario-id', sc.id);
 
-      document.querySelectorAll('.run-scenario-btn').forEach(btn => {
+        const inner = document.createElement('div');
+
+        const eyebrow = document.createElement('div');
+        eyebrow.className = 'eyebrow';
+        eyebrow.textContent = (sc.id || '').toUpperCase();
+        inner.appendChild(eyebrow);
+
+        const title = document.createElement('h3');
+        title.className = 'card-title';
+        title.style.marginBottom = '8px';
+        title.textContent = sc.name || '';
+        inner.appendChild(title);
+
+        const desc = document.createElement('p');
+        desc.style.cssText = 'font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 12px;';
+        desc.textContent = sc.description || '';
+        inner.appendChild(desc);
+
+        const signalDiv = document.createElement('div');
+        signalDiv.style.cssText = 'font-size: 0.75rem; color: var(--text-muted); font-family: var(--font-mono);';
+        signalDiv.textContent = 'Signal: ';
+        const signalSpan = document.createElement('span');
+        signalSpan.style.color = 'var(--accent-cyan)';
+        signalSpan.textContent = sc.detection_signal || '';
+        signalDiv.appendChild(signalSpan);
+        inner.appendChild(signalDiv);
+
+        card.appendChild(inner);
+
+        const btn = document.createElement('button');
+        btn.className = 'btn btn-primary run-scenario-btn';
+        btn.setAttribute('data-scenario', sc.id);
+        btn.style.cssText = 'width: 100%; margin-top: 12px;';
+        btn.textContent = 'Run Scenario';
         btn.addEventListener('click', async () => {
           if (isStreaming) return;
-          const scId = btn.getAttribute('data-scenario');
-          await runScenarioStream(scId);
+          await runScenarioStream(sc.id);
         });
+        card.appendChild(btn);
+
+        scenarioCardsContainer.appendChild(card);
       });
     }
 
@@ -243,7 +268,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const events = await TokenDataService.runScenario(scenarioId);
     const logTableBody = document.getElementById('event-log-tbody');
-    if (logTableBody) logTableBody.innerHTML = '';
+    if (logTableBody) logTableBody.textContent = '';
 
     const accumulatedEvents = [];
 
@@ -341,7 +366,7 @@ document.addEventListener('DOMContentLoaded', () => {
   function renderEventLog(events) {
     const tbody = document.getElementById('event-log-tbody');
     if (!tbody) return;
-    tbody.innerHTML = '';
+    tbody.textContent = '';
     events.forEach(evt => appendEventLogRow(evt));
   }
 
@@ -353,20 +378,58 @@ document.addEventListener('DOMContentLoaded', () => {
     
     let typeBadge = 'badge-active';
     if (evt.event_type === 'token_refreshed') typeBadge = 'badge-rotated';
-    if (evt.event_type.includes('reuse') || evt.event_type.includes('replay') || evt.result === 'rejected') typeBadge = 'badge-reused';
+    if (evt.event_type && (evt.event_type.includes('reuse') || evt.event_type.includes('replay') || evt.result === 'rejected')) typeBadge = 'badge-reused';
 
     const timeShort = evt.time ? evt.time.split('T')[1].replace('Z', '') : '--:--:--';
-    const hashShort = evt.token_hash.length > 14 ? evt.token_hash.slice(0, 14) + '..' : evt.token_hash;
+    const hashShort = evt.token_hash && evt.token_hash.length > 14 ? evt.token_hash.slice(0, 14) + '..' : (evt.token_hash || '');
 
-    tr.innerHTML = `
-      <td class="timestamp mono">${timeShort}</td>
-      <td class="mono">${evt.event_id}</td>
-      <td><span class="badge ${typeBadge}">${evt.event_type}</span></td>
-      <td class="mono hash">${hashShort}</td>
-      <td class="mono">${evt.ip_hash || '---'}</td>
-      <td class="mono">${evt.device_id || '---'}</td>
-      <td><span style="color: ${evt.result === 'accepted' ? 'var(--accent-cyan)' : 'var(--danger-red)'}; font-family: var(--font-mono); font-weight: 600;">${evt.result}</span></td>
-    `;
+    // td 1: timestamp
+    const tdTime = document.createElement('td');
+    tdTime.className = 'timestamp mono';
+    tdTime.textContent = timeShort;
+    tr.appendChild(tdTime);
+
+    // td 2: event_id
+    const tdId = document.createElement('td');
+    tdId.className = 'mono';
+    tdId.textContent = evt.event_id || '';
+    tr.appendChild(tdId);
+
+    // td 3: event_type badge
+    const tdType = document.createElement('td');
+    const badge = document.createElement('span');
+    badge.className = `badge ${typeBadge}`;
+    badge.textContent = evt.event_type || '';
+    tdType.appendChild(badge);
+    tr.appendChild(tdType);
+
+    // td 4: token_hash
+    const tdHash = document.createElement('td');
+    tdHash.className = 'mono hash';
+    tdHash.textContent = hashShort;
+    tr.appendChild(tdHash);
+
+    // td 5: ip_hash
+    const tdIp = document.createElement('td');
+    tdIp.className = 'mono';
+    tdIp.textContent = evt.ip_hash || '---';
+    tr.appendChild(tdIp);
+
+    // td 6: device_id
+    const tdDev = document.createElement('td');
+    tdDev.className = 'mono';
+    tdDev.textContent = evt.device_id || '---';
+    tr.appendChild(tdDev);
+
+    // td 7: result
+    const tdRes = document.createElement('td');
+    const resSpan = document.createElement('span');
+    resSpan.style.color = evt.result === 'accepted' ? 'var(--accent-cyan)' : 'var(--danger-red)';
+    resSpan.style.fontFamily = 'var(--font-mono)';
+    resSpan.style.fontWeight = '600';
+    resSpan.textContent = evt.result || '';
+    tdRes.appendChild(resSpan);
+    tr.appendChild(tdRes);
 
     tbody.appendChild(tr);
   }
@@ -383,7 +446,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function renderFilteredFamilies() {
       if (!familiesGrid) return;
-      familiesGrid.innerHTML = '';
+      familiesGrid.textContent = '';
 
       const filtered = Object.entries(allFamilies).filter(([famId, tokens]) => {
         // Search query check
@@ -400,11 +463,11 @@ document.addEventListener('DOMContentLoaded', () => {
       });
 
       if (filtered.length === 0) {
-        familiesGrid.innerHTML = `
-          <div style="grid-column: 1 / -1; padding: 48px; text-align: center; color: var(--text-muted);">
-            No token families matched the criteria.
-          </div>
-        `;
+        familiesGrid.textContent = '';
+        const emptyDiv = document.createElement('div');
+        emptyDiv.style.cssText = 'grid-column: 1 / -1; padding: 48px; text-align: center; color: var(--text-muted);';
+        emptyDiv.textContent = 'No token families matched the criteria.';
+        familiesGrid.appendChild(emptyDiv);
         return;
       }
 
@@ -419,18 +482,36 @@ document.addEventListener('DOMContentLoaded', () => {
         const statusBadge = hasReused ? 'badge-reused' : (newestToken.status === 'rotated' ? 'badge-rotated' : 'badge-active');
         const statusText = hasReused ? 'REUSE DETECTED' : (newestToken.status || 'ACTIVE');
 
-        card.innerHTML = `
-          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
-            <span class="mono" style="font-weight: 700; color: var(--text-primary); font-size: 1rem;">${famId}</span>
-            <span class="badge ${statusBadge}">${statusText}</span>
-          </div>
-          <div style="font-size: 0.8125rem; color: var(--text-muted); margin-bottom: 16px;">
-            Tokens in family: <span class="mono" style="color: var(--text-primary);">${tokens.length}</span>
-          </div>
-          <div class="mini-diagram-slot" style="pointer-events: none;"></div>
-        `;
+        const topRow = document.createElement('div');
+        topRow.style.cssText = 'display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;';
 
-        const slot = card.querySelector('.mini-diagram-slot');
+        const famSpan = document.createElement('span');
+        famSpan.className = 'mono';
+        famSpan.style.cssText = 'font-weight: 700; color: var(--text-primary); font-size: 1rem;';
+        famSpan.textContent = famId;
+        topRow.appendChild(famSpan);
+
+        const badgeSpan = document.createElement('span');
+        badgeSpan.className = `badge ${statusBadge}`;
+        badgeSpan.textContent = statusText;
+        topRow.appendChild(badgeSpan);
+        card.appendChild(topRow);
+
+        const countRow = document.createElement('div');
+        countRow.style.cssText = 'font-size: 0.8125rem; color: var(--text-muted); margin-bottom: 16px;';
+        countRow.textContent = 'Tokens in family: ';
+        const countSpan = document.createElement('span');
+        countSpan.className = 'mono';
+        countSpan.style.color = 'var(--text-primary)';
+        countSpan.textContent = String(tokens.length);
+        countRow.appendChild(countSpan);
+        card.appendChild(countRow);
+
+        const slot = document.createElement('div');
+        slot.className = 'mini-diagram-slot';
+        slot.style.pointerEvents = 'none';
+        card.appendChild(slot);
+
         const miniDiagram = new TokenChainDiagram(slot, { size: 'small' });
         miniDiagram.render(tokens, famId);
 
@@ -489,7 +570,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Schema definition directly matching schema/event.schema.json
     const schemaFields = [
       { name: "event_id", type: "string", required: true, desc: "Unique event identifier (e.g. evt-001)" },
-      { name: "event_type", type: "string (enum)", required: true, desc: "Lifecycle state: token_issued, token_used, token_refreshed, token_revoked, token_expired, logout, refresh_reuse_detected, suspicious_location, suspicious_device, replay_detected" },
+      { name: "event_type", type: "string (enum)", required: true, desc: "Lifecycle state: token_issued, token_used, token_refreshed, token_revoked, token_expired, logout, refresh_reuse_detected, suspicious_location, suspicious_device, replay_detected, login_failed, token_rejected" },
       { name: "time", type: "string (date-time)", required: true, desc: "ISO 8601 UTC timestamp of occurrence" },
       { name: "user_id", type: "string", required: true, desc: "Synthetic or application user identifier" },
       { name: "token_hash", type: "string", required: true, desc: "Privacy-preserving SHA-256 salted hash of the token" },
@@ -503,18 +584,37 @@ document.addEventListener('DOMContentLoaded', () => {
       { name: "result", type: "string (enum)", required: true, desc: "Outcome of request: accepted | rejected" }
     ];
 
-    tableBody.innerHTML = schemaFields.map(f => `
-      <tr>
-        <td class="mono" style="color: var(--text-primary); font-weight: 600;">${f.name}</td>
-        <td class="mono" style="color: var(--accent-cyan);">${f.type}</td>
-        <td>
-          <span class="badge ${f.required ? 'badge-reused' : 'badge-rotated'}" style="font-size: 0.6875rem;">
-            ${f.required ? 'Required' : 'Optional'}
-          </span>
-        </td>
-        <td style="color: var(--text-secondary); font-size: 0.875rem;">${f.desc}</td>
-      </tr>
-    `).join('');
+    tableBody.textContent = '';
+    schemaFields.forEach(f => {
+      const tr = document.createElement('tr');
+
+      const tdName = document.createElement('td');
+      tdName.className = 'mono';
+      tdName.style.cssText = 'color: var(--text-primary); font-weight: 600;';
+      tdName.textContent = f.name;
+      tr.appendChild(tdName);
+
+      const tdType = document.createElement('td');
+      tdType.className = 'mono';
+      tdType.style.color = 'var(--accent-cyan)';
+      tdType.textContent = f.type;
+      tr.appendChild(tdType);
+
+      const tdReq = document.createElement('td');
+      const badge = document.createElement('span');
+      badge.className = `badge ${f.required ? 'badge-reused' : 'badge-rotated'}`;
+      badge.style.fontSize = '0.6875rem';
+      badge.textContent = f.required ? 'Required' : 'Optional';
+      tdReq.appendChild(badge);
+      tr.appendChild(tdReq);
+
+      const tdDesc = document.createElement('td');
+      tdDesc.style.cssText = 'color: var(--text-secondary); font-size: 0.875rem;';
+      tdDesc.textContent = f.desc;
+      tr.appendChild(tdDesc);
+
+      tableBody.appendChild(tr);
+    });
   }
 
   // Initial trigger

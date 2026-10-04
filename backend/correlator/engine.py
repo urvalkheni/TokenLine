@@ -1,7 +1,10 @@
 import uuid
 import os
+import logging
 from typing import Dict, List, Optional, Any, Set, Tuple
 from backend.correlator.models import TokenRecord, TokenReuseRecord, TokenStatus
+
+logger = logging.getLogger("tokenline.correlator.engine")
 
 
 class TokenFamilyCorrelator:
@@ -431,86 +434,95 @@ class TokenFamilyCorrelator:
         """
         Synchronizes the current event and correlator state to the database idempotently.
         """
-        from backend.collector.db import TokenFamilyMember, TokenReuseRecord as DBTokenReuseRecord
+        try:
+            from backend.collector.db import TokenFamilyMember, TokenReuseRecord as DBTokenReuseRecord
 
-        event_id = event_data.get("event_id", "")
-        event_type = event_data.get("event_type", "")
-        time = event_data.get("time", "")
-        user_id = event_data.get("user_id") or "unknown"
-        token_hash = event_data.get("token_hash")
-        parent_token_hash = event_data.get("parent_token_hash")
-        event_token_family = event_data.get("token_family")
+            event_id = event_data.get("event_id", "")
+            event_type = event_data.get("event_type", "")
+            time = event_data.get("time", "")
+            user_id = event_data.get("user_id") or "unknown"
+            token_hash = event_data.get("token_hash")
+            parent_token_hash = event_data.get("parent_token_hash")
+            event_token_family = event_data.get("token_family")
 
-        # 1. Store reuse record if detected and not already present in DB
-        if detected_reuse:
-            existing_reuse = db_session.query(DBTokenReuseRecord).filter(
-                DBTokenReuseRecord.token_hash == detected_reuse.token_hash,
-                DBTokenReuseRecord.attempted_event_id == detected_reuse.attempted_event_id
-            ).first()
-            if not existing_reuse:
-                db_reuse = DBTokenReuseRecord(
-                    token_hash=detected_reuse.token_hash,
-                    token_family=detected_reuse.token_family,
-                    reused_at=detected_reuse.reused_at,
-                    attempted_event_id=detected_reuse.attempted_event_id
-                )
-                db_session.add(db_reuse)
+            # 1. Store reuse record if detected and not already present in DB
+            if detected_reuse:
+                existing_reuse = db_session.query(DBTokenReuseRecord).filter(
+                    DBTokenReuseRecord.token_hash == detected_reuse.token_hash,
+                    DBTokenReuseRecord.attempted_event_id == detected_reuse.attempted_event_id
+                ).first()
+                if not existing_reuse:
+                    db_reuse = DBTokenReuseRecord(
+                        token_hash=detected_reuse.token_hash,
+                        token_family=detected_reuse.token_family,
+                        reused_at=detected_reuse.reused_at,
+                        attempted_event_id=detected_reuse.attempted_event_id
+                    )
+                    db_session.add(db_reuse)
 
-        # 2. Sync token lifecycle records
-        if event_type == "token_refreshed" and parent_token_hash:
-            parent = db_session.query(TokenFamilyMember).filter(TokenFamilyMember.token_hash == parent_token_hash).first()
-            if parent:
-                family_id = parent.token_family
-                parent.is_rotated = True
-                if not parent.rotated_at:
-                    parent.rotated_at = time
-                if not parent.superseded_by:
-                    parent.superseded_by = token_hash
-                db_session.add(parent)
-            else:
-                family_id = event_token_family or f"family-{uuid.uuid4().hex[:8]}"
-                parent = TokenFamilyMember(
-                    token_hash=parent_token_hash,
-                    token_family=family_id,
-                    parent_token_hash=None,
-                    is_rotated=True,
-                    rotated_at=time,
-                    superseded_by=token_hash,
-                    user_id=user_id
-                )
-                db_session.add(parent)
+            # 2. Sync token lifecycle records
+            if event_type == "token_refreshed" and parent_token_hash:
+                parent = db_session.query(TokenFamilyMember).filter(TokenFamilyMember.token_hash == parent_token_hash).first()
+                if parent:
+                    family_id = parent.token_family
+                    parent.is_rotated = True
+                    if not parent.rotated_at:
+                        parent.rotated_at = time
+                    if not parent.superseded_by:
+                        parent.superseded_by = token_hash
+                    db_session.add(parent)
+                else:
+                    family_id = event_token_family or f"family-{uuid.uuid4().hex[:8]}"
+                    parent = TokenFamilyMember(
+                        token_hash=parent_token_hash,
+                        token_family=family_id,
+                        parent_token_hash=None,
+                        is_rotated=True,
+                        rotated_at=time,
+                        superseded_by=token_hash,
+                        user_id=user_id
+                    )
+                    db_session.add(parent)
 
-            child = db_session.query(TokenFamilyMember).filter(TokenFamilyMember.token_hash == token_hash).first()
-            if child:
-                child.parent_token_hash = parent_token_hash
-                child.token_family = family_id
-                db_session.add(child)
-            else:
-                child = TokenFamilyMember(
-                    token_hash=token_hash,
-                    token_family=family_id,
-                    parent_token_hash=parent_token_hash,
-                    is_rotated=False,
-                    user_id=user_id
-                )
-                db_session.add(child)
-            db_session.commit()
-
-        elif event_type == "token_issued" and token_hash:
-            token = db_session.query(TokenFamilyMember).filter(TokenFamilyMember.token_hash == token_hash).first()
-            if not token:
-                family_id = event_token_family or f"family-{uuid.uuid4().hex[:8]}"
-                token = TokenFamilyMember(
-                    token_hash=token_hash,
-                    token_family=family_id,
-                    parent_token_hash=parent_token_hash,
-                    is_rotated=False,
-                    user_id=user_id
-                )
-                db_session.add(token)
+                child = db_session.query(TokenFamilyMember).filter(TokenFamilyMember.token_hash == token_hash).first()
+                if child:
+                    child.parent_token_hash = parent_token_hash
+                    child.token_family = family_id
+                    db_session.add(child)
+                else:
+                    child = TokenFamilyMember(
+                        token_hash=token_hash,
+                        token_family=family_id,
+                        parent_token_hash=parent_token_hash,
+                        is_rotated=False,
+                        user_id=user_id
+                    )
+                    db_session.add(child)
                 db_session.commit()
-        elif detected_reuse:
-            db_session.commit()
+
+            elif event_type == "token_issued" and token_hash:
+                token = db_session.query(TokenFamilyMember).filter(TokenFamilyMember.token_hash == token_hash).first()
+                if not token:
+                    family_id = event_token_family or f"family-{uuid.uuid4().hex[:8]}"
+                    token = TokenFamilyMember(
+                        token_hash=token_hash,
+                        token_family=family_id,
+                        parent_token_hash=parent_token_hash,
+                        is_rotated=False,
+                        user_id=user_id
+                    )
+                    db_session.add(token)
+                    db_session.commit()
+            elif detected_reuse:
+                db_session.commit()
+        except Exception as e:
+            if hasattr(db_session, "rollback"):
+                db_session.rollback()
+            logger.error(
+                f"Database synchronization failed during correlation for event {event_data.get('event_id')}: {e}",
+                exc_info=True
+            )
+            raise
 
 
 _default_correlator = TokenFamilyCorrelator()

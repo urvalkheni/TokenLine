@@ -225,17 +225,35 @@ class TokenGlobe {
       const famShort = closest.family.length > 18 ? closest.family.slice(0, 16) + '..' : closest.family;
       const statusClass = closest.status === 'reused' ? 'badge-reused' : (closest.status === 'rotated' ? 'badge-rotated' : 'badge-active');
 
-      this.tooltip.innerHTML = `
-        <div style="font-family: var(--font-mono); font-weight: 600; margin-bottom: 4px;">
-          <span style="color: var(--text-muted);">token_hash:</span> ${hashShort}
-        </div>
-        <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 6px;">
-          <span>token_family:</span> <span style="color: var(--text-primary);">${famShort}</span>
-        </div>
-        <div>
-          <span class="badge ${statusClass}">${closest.status}</span>
-        </div>
-      `;
+      this.tooltip.textContent = '';
+
+      const line1 = document.createElement('div');
+      line1.style.cssText = 'font-family: var(--font-mono); font-weight: 600; margin-bottom: 4px;';
+      const lbl1 = document.createElement('span');
+      lbl1.style.color = 'var(--text-muted)';
+      lbl1.textContent = 'token_hash: ';
+      line1.appendChild(lbl1);
+      line1.appendChild(document.createTextNode(hashShort));
+
+      const line2 = document.createElement('div');
+      line2.style.cssText = 'font-size: 11px; color: var(--text-muted); margin-bottom: 6px;';
+      const lbl2 = document.createElement('span');
+      lbl2.textContent = 'token_family: ';
+      const val2 = document.createElement('span');
+      val2.style.color = 'var(--text-primary)';
+      val2.textContent = famShort;
+      line2.appendChild(lbl2);
+      line2.appendChild(val2);
+
+      const line3 = document.createElement('div');
+      const badge = document.createElement('span');
+      badge.className = `badge ${statusClass}`;
+      badge.textContent = closest.status;
+      line3.appendChild(badge);
+
+      this.tooltip.appendChild(line1);
+      this.tooltip.appendChild(line2);
+      this.tooltip.appendChild(line3);
 
       this.tooltip.style.left = `${closest.sx + 14}px`;
       this.tooltip.style.top = `${closest.sy + 10}px`;
