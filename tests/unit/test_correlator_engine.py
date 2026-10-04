@@ -2,10 +2,8 @@ import os
 import sys
 import pytest
 
-# Ensure repository root is in python path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
-
 from backend.correlator import TokenFamilyCorrelator, TokenStatus, TokenRecord, TokenReuseRecord
+
 
 
 @pytest.fixture
@@ -258,3 +256,264 @@ def test_logout_and_revocation_status(correlator):
         "result": "accepted"
     })
     assert correlator.tokens["tok-logout-test"].status == TokenStatus.REVOKED
+    assert correlator.tokens["tok-logout-test"].metadata.get("revoked_at") == "2026-09-01T10:20:00Z"
+
+
+def test_token_expired_and_revoked_events(correlator):
+    # Issue tokens
+    correlator.process_event({
+        "event_id": "ev-iss-1",
+        "event_type": "token_issued",
+        "time": "2026-09-01T10:00:00Z",
+        "user_id": "user-exp",
+        "token_hash": "tok-exp-1",
+        "token_family": "fam-exp",
+        "ip_hash": "ip",
+        "device_id": "dev",
+        "result": "accepted"
+    })
+    correlator.process_event({
+        "event_id": "ev-iss-2",
+        "event_type": "token_issued",
+        "time": "2026-09-01T10:00:00Z",
+        "user_id": "user-rev",
+        "token_hash": "tok-rev-1",
+        "token_family": "fam-rev",
+        "ip_hash": "ip",
+        "device_id": "dev",
+        "result": "accepted"
+    })
+
+    assert correlator.tokens["tok-exp-1"].status == TokenStatus.ACTIVE
+    assert correlator.tokens["tok-rev-1"].status == TokenStatus.ACTIVE
+
+    # Trigger token_expired
+    correlator.process_event({
+        "event_id": "ev-exp",
+        "event_type": "token_expired",
+        "time": "2026-09-01T11:00:00Z",
+        "user_id": "user-exp",
+        "token_hash": "tok-exp-1",
+        "token_family": "fam-exp",
+        "ip_hash": "ip",
+        "device_id": "dev",
+        "result": "rejected"
+    })
+    assert correlator.tokens["tok-exp-1"].status == TokenStatus.EXPIRED
+
+    # Trigger token_revoked
+    correlator.process_event({
+        "event_id": "ev-rev",
+        "event_type": "token_revoked",
+        "time": "2026-09-01T11:15:00Z",
+        "user_id": "user-rev",
+        "token_hash": "tok-rev-1",
+        "token_family": "fam-rev",
+        "ip_hash": "ip",
+        "device_id": "dev",
+        "result": "rejected"
+    })
+    assert correlator.tokens["tok-rev-1"].status == TokenStatus.REVOKED
+    assert correlator.tokens["tok-rev-1"].metadata.get("revoked_at") == "2026-09-01T11:15:00Z"
+
+
+def test_idempotent_event_replay_single_reuse_record(correlator):
+    # 1. Issue Token A
+    correlator.process_event({
+        "event_id": "e-issue",
+        "event_type": "token_issued",
+        "time": "2026-09-01T10:00:00Z",
+        "user_id": "u1",
+        "token_hash": "tok-A",
+        "token_family": "fam-idem",
+        "ip_hash": "ip1",
+        "device_id": "dev1",
+        "result": "accepted"
+    })
+
+    # 2. Legitimate rotation Token A -> Token B
+    rot_event = {
+        "event_id": "e-rotate-1",
+        "event_type": "token_refreshed",
+        "time": "2026-09-01T10:10:00Z",
+        "user_id": "u1",
+        "token_hash": "tok-B",
+        "parent_token_hash": "tok-A",
+        "ip_hash": "ip1",
+        "device_id": "dev1",
+        "result": "accepted"
+    }
+    correlator.process_event(rot_event)
+
+    # 3. Replay legitimate rotation 100 times -> MUST NOT produce any reuse alerts (false positives)
+    for _ in range(100):
+        correlator.process_event(rot_event)
+    assert len(correlator.get_reuse_records()) == 0
+
+    # 4. Attack event: presentation of rotated Token A with event_id 'e-attack-1'
+    attack_event_1 = {
+        "event_id": "e-attack-1",
+        "event_type": "token_refreshed",
+        "time": "2026-09-01T10:20:00Z",
+        "user_id": "u1",
+        "token_hash": "tok-B-evil",
+        "parent_token_hash": "tok-A",
+        "ip_hash": "ip-evil",
+        "device_id": "dev-evil",
+        "result": "rejected"
+    }
+
+    # Process once
+    r1 = correlator.process_event(attack_event_1)
+    assert r1 is not None
+    assert len(correlator.get_reuse_records()) == 1
+
+    # Process the exact same event 100 times -> MUST still have exactly 1 reuse record
+    for _ in range(100):
+        correlator.process_event(attack_event_1)
+    assert len(correlator.get_reuse_records()) == 1
+    assert correlator.get_reuse_records()[0].attempted_event_id == "e-attack-1"
+
+    # 5. Different attack event using the same rotated token (different event_id 'e-attack-2')
+    attack_event_2 = {
+        "event_id": "e-attack-2",
+        "event_type": "token_used",
+        "time": "2026-09-01T10:30:00Z",
+        "user_id": "u1",
+        "token_hash": "tok-A",
+        "ip_hash": "ip-evil-2",
+        "device_id": "dev-evil-2",
+        "result": "rejected"
+    }
+    r2 = correlator.process_event(attack_event_2)
+    assert r2 is not None
+
+    # Replay attack_event_2 50 times -> MUST result in exactly 2 distinct reuse records
+    for _ in range(50):
+        correlator.process_event(attack_event_2)
+    records = correlator.get_reuse_records()
+    assert len(records) == 2
+    assert {r.attempted_event_id for r in records} == {"e-attack-1", "e-attack-2"}
+
+
+def test_logout_revokes_entire_family_and_preserves_lineage(correlator):
+    # 1. Issue Token A (root)
+    correlator.process_event({
+        "event_id": "e-iss",
+        "event_type": "token_issued",
+        "time": "2026-09-01T10:00:00Z",
+        "user_id": "u-alice",
+        "token_hash": "tok-fam-A",
+        "token_family": "fam-alice-1",
+        "ip_hash": "ip",
+        "device_id": "dev",
+        "result": "accepted"
+    })
+
+    # 2. Refresh Token A -> Token B
+    correlator.process_event({
+        "event_id": "e-rot-1",
+        "event_type": "token_refreshed",
+        "time": "2026-09-01T10:10:00Z",
+        "user_id": "u-alice",
+        "token_hash": "tok-fam-B",
+        "parent_token_hash": "tok-fam-A",
+        "ip_hash": "ip",
+        "device_id": "dev",
+        "result": "accepted"
+    })
+
+    # 3. Refresh Token B -> Token C
+    correlator.process_event({
+        "event_id": "e-rot-2",
+        "event_type": "token_refreshed",
+        "time": "2026-09-01T10:20:00Z",
+        "user_id": "u-alice",
+        "token_hash": "tok-fam-C",
+        "parent_token_hash": "tok-fam-B",
+        "ip_hash": "ip",
+        "device_id": "dev",
+        "result": "accepted"
+    })
+
+    assert correlator.tokens["tok-fam-A"].status == TokenStatus.ROTATED
+    assert correlator.tokens["tok-fam-B"].status == TokenStatus.ROTATED
+    assert correlator.tokens["tok-fam-C"].status == TokenStatus.ACTIVE
+
+    # Lineage before logout
+    assert correlator.reconstruct_chain("tok-fam-C") == ["tok-fam-A", "tok-fam-B", "tok-fam-C"]
+    assert correlator.get_ancestors("tok-fam-C") == ["tok-fam-A", "tok-fam-B"]
+    assert correlator.get_descendants("tok-fam-A") == ["tok-fam-B", "tok-fam-C"]
+
+    # 4. User logs out presenting the active token tok-fam-C
+    correlator.process_event({
+        "event_id": "e-logout",
+        "event_type": "logout",
+        "time": "2026-09-01T10:30:00Z",
+        "user_id": "u-alice",
+        "token_hash": "tok-fam-C",
+        "token_family": "fam-alice-1",
+        "ip_hash": "ip",
+        "device_id": "dev",
+        "result": "accepted"
+    })
+
+    # Acceptance Criteria: Logout revokes the relevant family
+    assert correlator.tokens["tok-fam-A"].status == TokenStatus.REVOKED
+    assert correlator.tokens["tok-fam-B"].status == TokenStatus.REVOKED
+    assert correlator.tokens["tok-fam-C"].status == TokenStatus.REVOKED
+
+    # Acceptance Criteria: Revoked tokens cannot remain active
+    for tok_hash in ["tok-fam-A", "tok-fam-B", "tok-fam-C"]:
+        assert correlator.tokens[tok_hash].status != TokenStatus.ACTIVE
+        assert correlator.tokens[tok_hash].metadata.get("revoked_at") == "2026-09-01T10:30:00Z"
+
+    # Acceptance Criteria: Descendant/ancestor relationships remain correct
+    assert correlator.reconstruct_chain("tok-fam-C") == ["tok-fam-A", "tok-fam-B", "tok-fam-C"]
+    assert correlator.get_ancestors("tok-fam-C") == ["tok-fam-A", "tok-fam-B"]
+    assert correlator.get_descendants("tok-fam-A") == ["tok-fam-B", "tok-fam-C"]
+
+
+def test_revoked_tokens_cannot_transition_to_active(correlator):
+    # 1. Issue and revoke token
+    correlator.process_event({
+        "event_id": "e-iss",
+        "event_type": "token_issued",
+        "time": "2026-09-01T10:00:00Z",
+        "user_id": "u-bob",
+        "token_hash": "tok-bob-1",
+        "token_family": "fam-bob-1",
+        "ip_hash": "ip",
+        "device_id": "dev",
+        "result": "accepted"
+    })
+    correlator.process_event({
+        "event_id": "e-rev",
+        "event_type": "token_revoked",
+        "time": "2026-09-01T10:05:00Z",
+        "user_id": "u-bob",
+        "token_hash": "tok-bob-1",
+        "token_family": "fam-bob-1",
+        "ip_hash": "ip",
+        "device_id": "dev",
+        "result": "accepted"
+    })
+    assert correlator.tokens["tok-bob-1"].status == TokenStatus.REVOKED
+
+    # 2. Subsequent issuance event with the same token_hash must NOT make it active again
+    correlator.process_event({
+        "event_id": "e-iss-replayed",
+        "event_type": "token_issued",
+        "time": "2026-09-01T10:10:00Z",
+        "user_id": "u-bob",
+        "token_hash": "tok-bob-1",
+        "token_family": "fam-bob-1",
+        "ip_hash": "ip",
+        "device_id": "dev",
+        "result": "accepted"
+    })
+    assert correlator.tokens["tok-bob-1"].status == TokenStatus.REVOKED
+    assert correlator.tokens["tok-bob-1"].status != TokenStatus.ACTIVE
+
+
+

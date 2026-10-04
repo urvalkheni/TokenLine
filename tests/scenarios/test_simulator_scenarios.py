@@ -3,10 +3,8 @@ import sys
 import json
 import pytest
 
-# Ensure repository root is in python path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
-
 from simulator.runner import run_scenario, run_all_scenarios, CANONICAL_SCENARIO_NAMES
+
 from simulator.base import EVENT_SCHEMA
 from backend.correlator import TokenFamilyCorrelator, TokenStatus
 import jsonschema
