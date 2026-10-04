@@ -3,6 +3,7 @@ import sys
 import json
 import pytest
 import jsonschema
+import logging
 
 # Ensure repository root is in python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
@@ -323,3 +324,32 @@ def test_logout_and_revocation_status(correlator):
 
     correlator.process_event(make_schema_valid_event("ev-logout", "logout", "2026-09-01T10:20:00Z", "u", "tok-rev", "fam-rev"))
     assert correlator.tokens["tok-rev"].status == TokenStatus.REVOKED
+
+
+def test_correlator_engine_db_sync_error_handling(caplog):
+    """
+    _sync_with_db must not silently pass; it must rollback session, log, and raise.
+    """
+    correlator = TokenFamilyCorrelator()
+
+    class FaultyDBSession:
+        def query(self, *args, **kwargs):
+            raise RuntimeError("Database connection lost during correlation sync")
+        def rollback(self):
+            self.rolled_back = True
+
+    faulty_session = FaultyDBSession()
+    event_data = {
+        "event_id": "evt-faulty-sync",
+        "event_type": "token_refreshed",
+        "time": "2026-08-16T10:00:00Z",
+        "token_hash": "child_hash",
+        "parent_token_hash": "parent_hash"
+    }
+
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(RuntimeError, match="Database connection lost"):
+            correlator.process_event(event_data, db_session=faulty_session)
+
+    assert faulty_session.rolled_back is True
+    assert any("Database synchronization failed during correlation" in record.message for record in caplog.records)

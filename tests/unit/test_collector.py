@@ -3,12 +3,14 @@ import sys
 import pytest
 import tempfile
 import json
+import logging
+from unittest.mock import patch
 
 # Add collector directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "backend", "collector"))
 
 from app import app
-from db import init_db, get_session, Event
+from db import init_db, get_session, Event, session_scope
 
 @pytest.fixture
 def client():
@@ -167,4 +169,116 @@ def test_ingest_duplicate_event_idempotency(client):
     res2 = client.post("/events", json=valid_event)
     assert res2.status_code == 200
     assert res2.get_json()["status"] == "event already exists"
+
+
+def test_10mb_payload_rejected(client):
+    """10 MB payloads are rejected with HTTP 413."""
+    ten_mb_size = 10 * 1024 * 1024
+    huge_data = "a" * ten_mb_size
+    response = client.post(
+        "/events",
+        data=huge_data,
+        headers={
+            "Content-Type": "application/json",
+            "Content-Length": str(ten_mb_size)
+        }
+    )
+    assert response.status_code == 413
+    res_data = response.get_json()
+    assert "Payload too large" in res_data.get("error", "")
+
+
+def test_maximum_field_lengths_rejected(client):
+    """Fields exceeding maximum allowed lengths are rejected by JSON schema validation."""
+    long_event = {
+        "event_id": "e" * 129,
+        "event_type": "token_issued",
+        "time": "2026-08-16T10:00:00Z",
+        "user_id": "user-test",
+        "token_hash": "tok_hash_1",
+        "token_family": "family-test",
+        "ip_hash": "ip_hash_1",
+        "country": "US",
+        "device_id": "device-1",
+        "result": "accepted"
+    }
+    response = client.post("/events", json=long_event)
+    assert response.status_code == 400
+    res_data = response.get_json()
+    assert "Schema validation failed" in res_data.get("error", "")
+
+
+def test_correlation_failure_is_logged_and_not_silent_success(client, caplog):
+    """When correlation fails, it is visible in logs and does not silently report success."""
+    valid_event = {
+        "event_id": "evt-corr-fail-1",
+        "event_type": "token_issued",
+        "time": "2026-08-16T10:00:00Z",
+        "user_id": "user-test",
+        "token_hash": "tok_corr_fail",
+        "token_family": "family-test",
+        "ip_hash": "ip_hash_1",
+        "country": "US",
+        "device_id": "device-1",
+        "result": "accepted"
+    }
+
+    with patch("app.process_event", side_effect=RuntimeError("Simulated correlator engine fault")):
+        with caplog.at_level(logging.ERROR):
+            response = client.post("/events", json=valid_event)
+
+        assert response.status_code == 500
+        res_data = response.get_json()
+        assert "Correlation error" in res_data.get("error", "")
+        assert any("Correlation failed for event evt-corr-fail-1" in record.message for record in caplog.records)
+
+
+def test_safe_database_session_lifecycle():
+    """Verify session_scope commits on success and safely rolls back and closes on exception."""
+    db_fd, db_path = tempfile.mkstemp(suffix=".db")
+    os.environ["DATABASE_URL"] = f"sqlite:///{db_path}"
+    init_db()
+
+    # Success case
+    with session_scope() as session:
+        session.add(Event(
+            event_id="evt-scope-1",
+            event_type="token_issued",
+            time="2026-08-16T10:00:00Z",
+            user_id="user-1",
+            token_hash="tok-1",
+            ip_hash="ip-1",
+            device_id="dev-1",
+            result="accepted"
+        ))
+        session.commit()
+
+    with session_scope() as session:
+        ev = session.query(Event).filter(Event.event_id == "evt-scope-1").first()
+        assert ev is not None
+
+    # Error case: rollback
+    with pytest.raises(ValueError):
+        with session_scope() as session:
+            session.add(Event(
+                event_id="evt-scope-2",
+                event_type="token_issued",
+                time="2026-08-16T10:00:00Z",
+                user_id="user-1",
+                token_hash="tok-2",
+                ip_hash="ip-1",
+                device_id="dev-1",
+                result="accepted"
+            ))
+            raise ValueError("Forced error during session scope")
+
+    with session_scope() as session:
+        ev = session.query(Event).filter(Event.event_id == "evt-scope-2").first()
+        assert ev is None
+
+    os.close(db_fd)
+    try:
+        os.unlink(db_path)
+    except OSError:
+        pass
 

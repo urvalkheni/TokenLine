@@ -4,7 +4,8 @@
   "type": "object",
   "properties": {
     "event_id": {
-      "type": "string"
+      "type": "string",
+      "maxLength": 128
     },
     "event_type": {
       "type": "string",
@@ -23,35 +24,45 @@
     },
     "time": {
       "type": "string",
-      "format": "date-time"
+      "format": "date-time",
+      "maxLength": 64
     },
     "user_id": {
-      "type": "string"
+      "type": "string",
+      "maxLength": 128
     },
     "token_hash": {
-      "type": "string"
+      "type": "string",
+      "maxLength": 256
     },
     "token_family": {
-      "type": "string"
+      "type": "string",
+      "maxLength": 128
     },
     "parent_token_hash": {
-      "type": "string"
+      "type": "string",
+      "maxLength": 256
     },
     "ip_hash": {
-      "type": "string"
+      "type": "string",
+      "maxLength": 128
     },
     "country": {
       "type": "string",
-      "pattern": "^[A-Z]{2}$"
+      "pattern": "^[A-Z]{2}$",
+      "maxLength": 2
     },
     "device_id": {
-      "type": "string"
+      "type": "string",
+      "maxLength": 128
     },
     "user_agent_family": {
-      "type": "string"
+      "type": "string",
+      "maxLength": 128
     },
     "endpoint": {
-      "type": "string"
+      "type": "string",
+      "maxLength": 512
     },
     "result": {
       "type": "string",

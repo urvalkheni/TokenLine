@@ -1,8 +1,11 @@
 import uuid
 import json
 import os
+import logging
 from sqlalchemy.orm import Session
 from db import get_session, TokenFamilyMember, TokenReuseRecord
+
+logger = logging.getLogger("tokenline.correlator")
 
 def process_event(event_data: dict, db: Session):
     event_id = event_data.get("event_id")
@@ -16,79 +19,84 @@ def process_event(event_data: dict, db: Session):
     if not token_hash:
         return
 
-    # Check for reuse on the presented token
-    # For token_refreshed, the user presents the parent_token_hash.
-    # For token_used, the user presents token_hash.
-    target_check = parent_token_hash if event_type == "token_refreshed" else token_hash
-    if target_check:
-        existing = db.query(TokenFamilyMember).filter(TokenFamilyMember.token_hash == target_check).first()
-        if existing and existing.is_rotated:
-            # Reuse detected! Log condition in token_reuse_records
-            reuse_record = TokenReuseRecord(
-                token_hash=target_check,
-                token_family=existing.token_family,
-                reused_at=time,
-                attempted_event_id=event_id
-            )
-            db.add(reuse_record)
-            db.commit()
+    try:
+        # Check for reuse on the presented token
+        # For token_refreshed, the user presents the parent_token_hash.
+        # For token_used, the user presents token_hash.
+        target_check = parent_token_hash if event_type == "token_refreshed" else token_hash
+        if target_check:
+            existing = db.query(TokenFamilyMember).filter(TokenFamilyMember.token_hash == target_check).first()
+            if existing and existing.is_rotated:
+                # Reuse detected! Log condition in token_reuse_records
+                reuse_record = TokenReuseRecord(
+                    token_hash=target_check,
+                    token_family=existing.token_family,
+                    reused_at=time,
+                    attempted_event_id=event_id
+                )
+                db.add(reuse_record)
+                db.commit()
 
-    if event_type == "token_refreshed" and parent_token_hash:
-        # Resolve parent
-        parent = db.query(TokenFamilyMember).filter(TokenFamilyMember.token_hash == parent_token_hash).first()
-        if parent:
-            family_id = parent.token_family
-            # Mark parent as rotated
-            if not parent.is_rotated:
-                parent.is_rotated = True
-                parent.rotated_at = time
-                parent.superseded_by = token_hash
+        if event_type == "token_refreshed" and parent_token_hash:
+            # Resolve parent
+            parent = db.query(TokenFamilyMember).filter(TokenFamilyMember.token_hash == parent_token_hash).first()
+            if parent:
+                family_id = parent.token_family
+                # Mark parent as rotated
+                if not parent.is_rotated:
+                    parent.is_rotated = True
+                    parent.rotated_at = time
+                    parent.superseded_by = token_hash
+                    db.add(parent)
+            else:
+                # Parent not seen before. Create a root for it provisionally.
+                family_id = event_token_family or f"family-{uuid.uuid4().hex[:8]}"
+                parent = TokenFamilyMember(
+                    token_hash=parent_token_hash,
+                    token_family=family_id,
+                    parent_token_hash=None,
+                    is_rotated=True,
+                    rotated_at=time,
+                    superseded_by=token_hash,
+                    user_id=user_id
+                )
                 db.add(parent)
-        else:
-            # Parent not seen before. Create a root for it provisionally.
-            family_id = event_token_family or f"family-{uuid.uuid4().hex[:8]}"
-            parent = TokenFamilyMember(
-                token_hash=parent_token_hash,
-                token_family=family_id,
-                parent_token_hash=None,
-                is_rotated=True,
-                rotated_at=time,
-                superseded_by=token_hash,
-                user_id=user_id
-            )
-            db.add(parent)
 
-        # Create or update child token
-        child = db.query(TokenFamilyMember).filter(TokenFamilyMember.token_hash == token_hash).first()
-        if child:
-            child.parent_token_hash = parent_token_hash
-            child.token_family = family_id
-            db.add(child)
-        else:
-            child = TokenFamilyMember(
-                token_hash=token_hash,
-                token_family=family_id,
-                parent_token_hash=parent_token_hash,
-                is_rotated=False,
-                user_id=user_id
-            )
-            db.add(child)
-        db.commit()
-
-    elif event_type == "token_issued":
-        # Check if already registered
-        token = db.query(TokenFamilyMember).filter(TokenFamilyMember.token_hash == token_hash).first()
-        if not token:
-            family_id = event_token_family or f"family-{uuid.uuid4().hex[:8]}"
-            token = TokenFamilyMember(
-                token_hash=token_hash,
-                token_family=family_id,
-                parent_token_hash=None,
-                is_rotated=False,
-                user_id=user_id
-            )
-            db.add(token)
+            # Create or update child token
+            child = db.query(TokenFamilyMember).filter(TokenFamilyMember.token_hash == token_hash).first()
+            if child:
+                child.parent_token_hash = parent_token_hash
+                child.token_family = family_id
+                db.add(child)
+            else:
+                child = TokenFamilyMember(
+                    token_hash=token_hash,
+                    token_family=family_id,
+                    parent_token_hash=parent_token_hash,
+                    is_rotated=False,
+                    user_id=user_id
+                )
+                db.add(child)
             db.commit()
+
+        elif event_type == "token_issued":
+            # Check if already registered
+            token = db.query(TokenFamilyMember).filter(TokenFamilyMember.token_hash == token_hash).first()
+            if not token:
+                family_id = event_token_family or f"family-{uuid.uuid4().hex[:8]}"
+                token = TokenFamilyMember(
+                    token_hash=token_hash,
+                    token_family=family_id,
+                    parent_token_hash=None,
+                    is_rotated=False,
+                    user_id=user_id
+                )
+                db.add(token)
+                db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Correlation error while processing event {event_id}: {e}", exc_info=True)
+        raise
 
 def reconstruct_chain(token_hash: str, db: Session) -> list:
     # Find the node
@@ -121,7 +129,7 @@ def reconstruct_chain(token_hash: str, db: Session) -> list:
 
 def process_event_file(filepath: str):
     if not os.path.exists(filepath):
-        print(f"File not found: {filepath}")
+        logger.error(f"File not found: {filepath}")
         return
 
     with open(filepath, "r") as f:
@@ -131,6 +139,11 @@ def process_event_file(filepath: str):
     try:
         for event in events:
             process_event(event, db)
-        print(f"Successfully processed {len(events)} events from {filepath}.")
+        logger.info(f"Successfully processed {len(events)} events from {filepath}.")
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error processing events from {filepath}: {e}", exc_info=True)
+        raise
     finally:
         db.close()
+

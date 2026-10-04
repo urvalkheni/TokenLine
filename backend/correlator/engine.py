@@ -1,6 +1,9 @@
 import uuid
+import logging
 from typing import Dict, List, Optional, Any, Union
 from backend.correlator.models import TokenRecord, TokenReuseRecord, TokenStatus
+
+logger = logging.getLogger("tokenline.correlator.engine")
 
 
 class TokenFamilyCorrelator:
@@ -328,6 +331,11 @@ class TokenFamilyCorrelator:
                     )
                     db_session.add(token)
                     db_session.commit()
-        except Exception:
-            # Fallback gracefully if database models are not available in isolated test environments
-            pass
+        except Exception as e:
+            if hasattr(db_session, "rollback"):
+                db_session.rollback()
+            logger.error(
+                f"Database synchronization failed during correlation for event {event_data.get('event_id')}: {e}",
+                exc_info=True
+            )
+            raise
