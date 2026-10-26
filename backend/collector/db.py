@@ -66,7 +66,7 @@ class Event(Base):
     event_type = Column(String, nullable=False)
     time = Column(TimezoneAwareDateTime, nullable=False, index=True)
     user_id = Column(String, nullable=False, index=True)
-    token_hash = Column(String, nullable=False)
+    token_hash = Column(String, nullable=True)
     token_family = Column(String, nullable=True, index=True)
     parent_token_hash = Column(String, nullable=True)
     ip_hash = Column(String, nullable=False)
@@ -75,6 +75,9 @@ class Event(Base):
     user_agent_family = Column(String, nullable=True)
     endpoint = Column(String, nullable=True)
     result = Column(String, nullable=False)
+    schema_version = Column(String, nullable=True)
+    source = Column(String, nullable=True)
+    is_simulation = Column(Boolean, nullable=True, default=False)
 
 
 class TokenFamilyMember(Base):
@@ -165,7 +168,7 @@ def insert_event(event_data):
             event_type=event_data["event_type"],
             time=event_data["time"],
             user_id=event_data["user_id"],
-            token_hash=event_data["token_hash"],
+            token_hash=event_data.get("token_hash"),
             token_family=event_data.get("token_family"),
             parent_token_hash=event_data.get("parent_token_hash"),
             ip_hash=event_data["ip_hash"],
@@ -173,7 +176,10 @@ def insert_event(event_data):
             device_id=event_data["device_id"],
             user_agent_family=event_data.get("user_agent_family"),
             endpoint=event_data.get("endpoint"),
-            result=event_data["result"]
+            result=event_data["result"],
+            schema_version=event_data.get("schema_version"),
+            source=event_data.get("source"),
+            is_simulation=event_data.get("is_simulation", False),
         )
         db.add(db_event)
         db.commit()

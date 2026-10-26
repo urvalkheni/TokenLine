@@ -573,7 +573,7 @@ document.addEventListener('DOMContentLoaded', () => {
       { name: "event_type", type: "string (enum)", required: true, desc: "Lifecycle state: token_issued, token_used, token_refreshed, token_revoked, token_expired, logout, refresh_reuse_detected, suspicious_location, suspicious_device, replay_detected, login_failed, token_rejected" },
       { name: "time", type: "string (date-time)", required: true, desc: "ISO 8601 UTC timestamp of occurrence" },
       { name: "user_id", type: "string", required: true, desc: "Synthetic or application user identifier" },
-      { name: "token_hash", type: "string", required: true, desc: "Privacy-preserving SHA-256 salted hash of the token" },
+      { name: "token_hash", type: "string", required: false, desc: "Privacy-preserving SHA-256 salted hash of the token (optional for login_failed)" },
       { name: "token_family", type: "string", required: false, desc: "Stable lineage group ID shared by ancestor and child tokens" },
       { name: "parent_token_hash", type: "string", required: false, desc: "Token hash of the rotated predecessor token on refresh" },
       { name: "ip_hash", type: "string", required: true, desc: "Salted cryptographic hash of client IPv4/IPv6" },
@@ -581,7 +581,10 @@ document.addEventListener('DOMContentLoaded', () => {
       { name: "device_id", type: "string", required: true, desc: "Synthetic client hardware/session identifier" },
       { name: "user_agent_family", type: "string", required: false, desc: "Client browser / HTTP client family name" },
       { name: "endpoint", type: "string", required: false, desc: "Target application HTTP route" },
-      { name: "result", type: "string (enum)", required: true, desc: "Outcome of request: accepted | rejected" }
+      { name: "result", type: "string (enum)", required: true, desc: "Outcome of request: accepted | rejected" },
+      { name: "schema_version", type: "string", required: false, desc: "Event schema version (e.g. 1.0.0)" },
+      { name: "source", type: "string", required: false, desc: "Producer component identifier (e.g. demo_app, simulator)" },
+      { name: "is_simulation", type: "boolean", required: false, desc: "Marker distinguishing synthetic simulation from real telemetry" }
     ];
 
     tableBody.textContent = '';

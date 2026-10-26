@@ -8,12 +8,20 @@ const router = express.Router();
 router.get('/profile', requireAuth, (req, res) => {
   const { userId, sessionId, tokenFamilyId } = req.user;
 
+  const deviceInfo = {
+    userAgent: req.get('User-Agent') || null,
+    ipAddress: req.ip || req.socket?.remoteAddress || null,
+    deviceId: req.body?.deviceId || req.get('X-Device-ID') || null,
+  };
+
   // Emit an event that the token was successfully used
   eventService.emit('token_used', {
     userId,
     sessionId,
+    deviceId: deviceInfo.deviceId || sessionId,
     tokenFamilyId,
-    endpoint: '/api/profile'
+    deviceInfo,
+    endpoint: req.originalUrl || req.path || '/api/profile'
   });
 
   const user = users.find(u => u.id === userId);

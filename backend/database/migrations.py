@@ -74,7 +74,7 @@ def upgrade_001(conn, engine):
             event_type VARCHAR NOT NULL,
             time VARCHAR NOT NULL,
             user_id VARCHAR NOT NULL,
-            token_hash VARCHAR NOT NULL,
+            token_hash VARCHAR,
             token_family VARCHAR,
             parent_token_hash VARCHAR,
             ip_hash VARCHAR NOT NULL,
@@ -182,10 +182,40 @@ def downgrade_003(conn, engine):
     pass
 
 
+def upgrade_004(conn, engine):
+    """Add schema_version, source, and is_simulation columns to events table."""
+    try:
+        inspector = inspect(engine)
+        cols = [c["name"] for c in inspector.get_columns("events")]
+    except Exception:
+        cols = []
+
+    if "schema_version" not in cols:
+        try:
+            conn.execute(text("ALTER TABLE events ADD COLUMN schema_version VARCHAR"))
+        except Exception:
+            pass
+    if "source" not in cols:
+        try:
+            conn.execute(text("ALTER TABLE events ADD COLUMN source VARCHAR"))
+        except Exception:
+            pass
+    if "is_simulation" not in cols:
+        try:
+            conn.execute(text("ALTER TABLE events ADD COLUMN is_simulation BOOLEAN DEFAULT 0"))
+        except Exception:
+            pass
+
+
+def downgrade_004(conn, engine):
+    pass
+
+
 MIGRATIONS = {
     "001_initial_schema": (upgrade_001, downgrade_001),
     "002_add_indexes_and_constraints": (upgrade_002, downgrade_002),
     "003_convert_timestamps_to_timezone_aware": (upgrade_003, downgrade_003),
+    "004_canonical_schema_fields": (upgrade_004, downgrade_004),
 }
 
 

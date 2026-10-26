@@ -34,12 +34,12 @@
       "maxLength": 128
     },
     "token_hash": {
-      "type": "string",
+      "type": ["string", "null"],
       "pattern": "^(hash_)?[0-9a-fA-F]{12,64}$",
       "maxLength": 128
     },
     "token_family": {
-      "type": "string",
+      "type": ["string", "null"],
       "maxLength": 128
     },
     "parent_token_hash": {
@@ -53,7 +53,7 @@
       "maxLength": 128
     },
     "country": {
-      "type": "string",
+      "type": ["string", "null"],
       "pattern": "^[A-Z]{2}$",
       "maxLength": 2
     },
@@ -62,11 +62,11 @@
       "maxLength": 128
     },
     "user_agent_family": {
-      "type": "string",
+      "type": ["string", "null"],
       "maxLength": 128
     },
     "endpoint": {
-      "type": "string",
+      "type": ["string", "null"],
       "maxLength": 512
     },
     "result": {
@@ -75,6 +75,17 @@
         "accepted",
         "rejected"
       ]
+    },
+    "schema_version": {
+      "type": "string",
+      "maxLength": 16
+    },
+    "source": {
+      "type": "string",
+      "maxLength": 64
+    },
+    "is_simulation": {
+      "type": "boolean"
     }
   },
   "required": [
@@ -82,7 +93,6 @@
     "event_type",
     "time",
     "user_id",
-    "token_hash",
     "ip_hash",
     "device_id",
     "result"

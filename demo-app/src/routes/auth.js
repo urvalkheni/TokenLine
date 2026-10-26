@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
@@ -27,26 +28,30 @@ function generateAccessToken(userId, sessionId, tokenFamilyId) {
 
 function extractDeviceInfo(req) {
   return {
-    userAgent: req.get('User-Agent') || 'unknown',
-    ipAddress: req.ip || '127.0.0.1',
-    deviceId: req.body.deviceId || 'unknown', // Typically from a trusted device cookie in a real app
-    deviceName: req.body.deviceName || 'unknown',
+    userAgent: req.get('User-Agent') || null,
+    ipAddress: req.ip || req.socket?.remoteAddress || null,
+    deviceId: req.body?.deviceId || req.get('X-Device-ID') || null,
+    deviceName: req.body?.deviceName || null,
   };
 }
 
 router.post('/login', (req, res) => {
   const { username, password } = req.body;
-
-  // Emitting before validation
-  eventService.emit('login_attempt', { username: username === 'demo-user' ? username : 'unknown' });
+  const deviceInfo = extractDeviceInfo(req);
+  const endpoint = req.originalUrl || req.path;
 
   const user = users.find(u => u.username === username);
   if (!user || !bcrypt.compareSync(password, user.passwordHash)) {
-    eventService.emit('login_failed', { username: username === 'demo-user' ? username : 'unknown' });
+    eventService.emit('login_failed', {
+      username: username || 'unknown',
+      userId: user ? user.id : (username || 'unknown'),
+      deviceInfo,
+      deviceId: deviceInfo.deviceId || (deviceInfo.userAgent ? 'dev-' + crypto.createHash('sha256').update(deviceInfo.userAgent + (deviceInfo.ipAddress || '')).digest('hex').slice(0, 12) : 'dev-unauthenticated'),
+      endpoint
+    });
     return res.status(401).json({ error: 'Invalid credentials' });
   }
 
-  const deviceInfo = extractDeviceInfo(req);
   const session = createSession(user.id, deviceInfo);
   const tokenFamilyId = generateId();
 
@@ -54,18 +59,15 @@ router.post('/login', (req, res) => {
   const { rawToken: refreshToken, hashedToken } = issueRefreshToken(user.id, session.sessionId, tokenFamilyId);
   const accessToken = generateAccessToken(user.id, session.sessionId, tokenFamilyId);
 
-  eventService.emit('login', {
-    userId: user.id,
-    sessionId: session.sessionId,
-    deviceInfo
-  });
-
   eventService.emit('token_issued', {
     userId: user.id,
     sessionId: session.sessionId,
+    deviceId: deviceInfo.deviceId || session.sessionId,
     tokenFamilyId,
     tokenType: 'refresh_token',
-    tokenIdentifier: hashedToken
+    tokenIdentifier: hashedToken,
+    deviceInfo,
+    endpoint
   });
 
   // DO NOT return password or sensitive data. Do NOT log raw tokens.
@@ -78,6 +80,8 @@ router.post('/login', (req, res) => {
 
 router.post('/refresh', (req, res) => {
   const { refreshToken } = req.body;
+  const deviceInfo = extractDeviceInfo(req);
+  const endpoint = req.originalUrl || req.path;
   
   if (!refreshToken) {
     return res.status(400).json({ error: 'Refresh token required' });
@@ -87,13 +91,29 @@ router.post('/refresh', (req, res) => {
   const tokenObj = findToken(hashedToken);
 
   if (!tokenObj) {
-    eventService.emit('token_refresh_failed', { reason: 'token_not_found', tokenIdentifier: hashedToken });
+    eventService.emit('token_refresh_failed', {
+      reason: 'token_not_found',
+      tokenIdentifier: hashedToken,
+      userId: 'unknown',
+      deviceId: deviceInfo.deviceId || 'unregistered-device',
+      deviceInfo,
+      endpoint
+    });
     return res.status(401).json({ error: 'Invalid refresh token' });
   }
 
   const session = getSession(tokenObj.sessionId);
   if (!session || session.revoked) {
-    eventService.emit('token_refresh_failed', { reason: 'session_revoked', tokenIdentifier: hashedToken, sessionId: tokenObj.sessionId });
+    eventService.emit('token_refresh_failed', {
+      reason: 'session_revoked',
+      tokenIdentifier: hashedToken,
+      sessionId: tokenObj.sessionId,
+      deviceId: deviceInfo.deviceId || tokenObj.sessionId,
+      userId: tokenObj.userId,
+      tokenFamilyId: tokenObj.tokenFamilyId,
+      deviceInfo,
+      endpoint
+    });
     return res.status(401).json({ error: 'Session revoked or invalid' });
   }
 
@@ -103,8 +123,11 @@ router.post('/refresh', (req, res) => {
     eventService.emit('refresh_reuse_detected', {
       userId: tokenObj.userId,
       sessionId: tokenObj.sessionId,
+      deviceId: deviceInfo.deviceId || tokenObj.sessionId,
       tokenFamilyId: tokenObj.tokenFamilyId,
-      reusedTokenIdentifier: hashedToken
+      reusedTokenIdentifier: hashedToken,
+      deviceInfo,
+      endpoint
     });
 
     // Revoke entire token family and session to protect the user
@@ -132,9 +155,12 @@ router.post('/refresh', (req, res) => {
   eventService.emit('token_refreshed', {
     userId: tokenObj.userId,
     sessionId: tokenObj.sessionId,
+    deviceId: deviceInfo.deviceId || tokenObj.sessionId,
     tokenFamilyId: tokenObj.tokenFamilyId,
     parentIdentifier: hashedToken,
-    successorIdentifier: newHashedToken
+    successorIdentifier: newHashedToken,
+    deviceInfo,
+    endpoint
   });
 
   return res.json({
@@ -145,13 +171,18 @@ router.post('/refresh', (req, res) => {
 });
 
 router.post('/logout', requireAuth, (req, res) => {
-  const { sessionId, userId } = req.user;
+  const { sessionId, userId, tokenFamilyId } = req.user;
+  const deviceInfo = extractDeviceInfo(req);
   
   revokeSession(sessionId);
   
   eventService.emit('logout', {
     userId,
-    sessionId
+    sessionId,
+    deviceId: deviceInfo.deviceId || sessionId,
+    tokenFamilyId,
+    deviceInfo,
+    endpoint: req.originalUrl || req.path
   });
 
   res.json({ message: 'Logged out successfully' });
