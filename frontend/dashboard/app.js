@@ -223,7 +223,13 @@ async function loadDashboardData() {
   
   // Calculate summary metrics
   const activeCount = new Set(events.filter(e => e.result === 'accepted' && e.event_type !== 'logout' && e.event_type !== 'token_expired').map(e => e.token_hash)).size;
-  const alertCount = events.filter(e => e.event_type.includes('reuse') || e.event_type.includes('expired') || e.event_type.includes('suspicious') || e.event_type.includes('replay')).length;
+  const alertCount = events.filter(e => 
+    e.event_type.includes('reuse') || 
+    (e.event_type.includes('expired') && e.event_type !== 'token_expired') || 
+    e.event_type.includes('suspicious') || 
+    e.event_type.includes('replay') ||
+    (e.event_type === 'token_used' && e.result === 'rejected')
+  ).length;
   const revokedCount = events.filter(e => e.event_type === 'token_revoked' || e.result === 'rejected').length;
   const sessionsCount = new Set(events.map(e => e.token_family)).size;
 
@@ -484,9 +490,10 @@ async function renderAlerts() {
   // Extract alert events
   const alertEvents = events.filter(e => 
     e.event_type.includes('reuse') || 
-    e.event_type.includes('expired') || 
+    (e.event_type.includes('expired') && e.event_type !== 'token_expired') || 
     e.event_type.includes('suspicious') || 
-    e.event_type.includes('replay')
+    e.event_type.includes('replay') ||
+    (e.event_type === 'token_used' && e.result === 'rejected')
   );
 
   alertEvents.forEach(alert => {

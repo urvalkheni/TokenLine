@@ -3,9 +3,10 @@ import os
 import logging
 import threading
 import copy
+from datetime import datetime, timezone
 from contextlib import contextmanager
 from typing import Dict, List, Optional, Any, Set, Tuple
-from backend.correlator.models import TokenRecord, TokenReuseRecord, TokenStatus
+from backend.correlator.models import TokenRecord, TokenReuseRecord, DetectionRecord, TokenStatus
 
 logger = logging.getLogger("tokenline.correlator.engine")
 
@@ -17,12 +18,49 @@ def is_in_transaction() -> bool:
     return getattr(_transaction_context, "active", False)
 
 
+def parse_timestamp(ts: Any) -> Optional[datetime]:
+    """
+    Parses ISO-8601 strings, short fixture strings (HH:MM or HH:MM:SS), or datetime objects
+    into timezone-aware UTC datetime instances.
+    """
+    if isinstance(ts, datetime):
+        if ts.tzinfo is None:
+            return ts.replace(tzinfo=timezone.utc)
+        return ts.astimezone(timezone.utc)
+    if not isinstance(ts, str):
+        return None
+    s = ts.strip()
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        try:
+            parts = s.split(":")
+            if len(parts) >= 2:
+                hour = int(parts[0])
+                minute = int(parts[1])
+                second = int(parts[2]) if len(parts) > 2 else 0
+                return datetime(2026, 1, 1, hour, minute, second, tzinfo=timezone.utc)
+        except Exception:
+            return None
+    return None
+
+
 class TokenFamilyCorrelator:
     """
     Unified Token-Family Correlator & State-Machine Engine.
     Reconstructs refresh-token parent/child chains into token families,
-    maintains lifecycle states (ACTIVE, ROTATED, REVOKED, EXPIRED),
-    and flags refresh-token reuse.
+    maintains lifecycle states (ACTIVE, ROTATED, REVOKED, EXPIRED, REUSED),
+    and evaluates production detection rules for:
+      - Refresh-token reuse
+      - Revoked-token use
+      - Expired-token use
+      - Concurrent use
+      - Impossible travel
     Provides idempotent, thread-safe correlation across concurrent and replayed events.
     """
 
@@ -32,10 +70,18 @@ class TokenFamilyCorrelator:
         self.tokens: Dict[str, TokenRecord] = {}
         # Key: token_family -> List[token_hash]
         self.families: Dict[str, List[str]] = {}
-        # List of detected reuse occurrences
+        # List of detected reuse occurrences (TokenReuseRecord)
         self.reuse_records: List[TokenReuseRecord] = []
         # Set of (token_hash, attempted_event_id) pairs to guarantee idempotent reuse recording
         self._reuse_seen: Set[Tuple[str, str]] = set()
+        # List of all detected violations (DetectionRecord)
+        self.detection_records: List[DetectionRecord] = []
+        # Deduplication set of (detection_type, token_hash, attempted_event_id)
+        self._detections_seen: Set[Tuple[str, str, str]] = set()
+        # Token usage history: token_hash -> List[Dict[str, Any]]
+        self._token_usages: Dict[str, List[Dict[str, Any]]] = {}
+        # User usage history: user_id -> List[Dict[str, Any]]
+        self._user_usages: Dict[str, List[Dict[str, Any]]] = {}
 
     def clear(self):
         """Clears in-memory correlation state thread-safely."""
@@ -44,6 +90,10 @@ class TokenFamilyCorrelator:
             self.families.clear()
             self.reuse_records.clear()
             self._reuse_seen.clear()
+            self.detection_records.clear()
+            self._detections_seen.clear()
+            self._token_usages.clear()
+            self._user_usages.clear()
 
     def _snapshot(self) -> Dict[str, Any]:
         """Captures a deep copy of all in-memory correlation state."""
@@ -52,6 +102,10 @@ class TokenFamilyCorrelator:
             "families": copy.deepcopy(self.families),
             "reuse_records": copy.deepcopy(self.reuse_records),
             "_reuse_seen": copy.copy(self._reuse_seen),
+            "detection_records": copy.deepcopy(self.detection_records),
+            "_detections_seen": copy.copy(self._detections_seen),
+            "_token_usages": copy.deepcopy(self._token_usages),
+            "_user_usages": copy.deepcopy(self._user_usages),
         }
 
     def _restore(self, snap: Dict[str, Any]):
@@ -60,6 +114,67 @@ class TokenFamilyCorrelator:
         self.families = snap["families"]
         self.reuse_records = snap["reuse_records"]
         self._reuse_seen = snap["_reuse_seen"]
+        self.detection_records = snap.get("detection_records", [])
+        self._detections_seen = snap.get("_detections_seen", set())
+        self._token_usages = snap.get("_token_usages", {})
+        self._user_usages = snap.get("_user_usages", {})
+
+    def _record_detection(
+        self,
+        detection_type: str,
+        token_hash: str,
+        token_family: str,
+        detected_at: str,
+        attempted_event_id: str,
+        severity: str = "high",
+        parent_token_hash: Optional[str] = None,
+        user_id: Optional[str] = None,
+        chain_context: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> DetectionRecord:
+        """Records a detection record idempotently, preventing duplicate alerts for identical evidence."""
+        key = (detection_type, token_hash, attempted_event_id)
+        if key in self._detections_seen:
+            for d in self.detection_records:
+                if (
+                    d.detection_type == detection_type
+                    and d.token_hash == token_hash
+                    and d.attempted_event_id == attempted_event_id
+                ):
+                    return d
+
+        rec = DetectionRecord(
+            detection_type=detection_type,
+            token_hash=token_hash,
+            token_family=token_family,
+            detected_at=detected_at,
+            attempted_event_id=attempted_event_id,
+            severity=severity,
+            parent_token_hash=parent_token_hash,
+            user_id=user_id,
+            chain_context=chain_context or [],
+            metadata=metadata or {},
+        )
+        self.detection_records.append(rec)
+        self._detections_seen.add(key)
+        return rec
+
+    def get_detection_records(
+        self,
+        detection_type: Optional[str] = None,
+        token_family: Optional[str] = None,
+        token_hash: Optional[str] = None,
+    ) -> List[DetectionRecord]:
+        """Returns recorded detection records, optionally filtered."""
+        with self._lock:
+            results = list(self.detection_records)
+            if detection_type:
+                results = [r for r in results if r.detection_type == detection_type]
+            if token_family:
+                results = [r for r in results if r.token_family == token_family]
+            if token_hash:
+                results = [r for r in results if r.token_hash == token_hash]
+            return results
 
     @contextmanager
     def transaction(self):
@@ -84,10 +199,10 @@ class TokenFamilyCorrelator:
         event_data: Dict[str, Any],
         db_session: Optional[Any] = None,
         commit: Optional[bool] = None
-    ) -> Optional[TokenReuseRecord]:
+    ) -> Optional[Any]:
         """
         Processes a schema-valid TokenLine authentication event idempotently.
-        Updates internal token family state machine and flags reuse if detected.
+        Updates internal token family state machine and flags violations if detected.
         Optionally persists/syncs to database if a db_session is provided.
         """
         if commit is None:
@@ -107,7 +222,7 @@ class TokenFamilyCorrelator:
         event_data: Dict[str, Any],
         db_session: Optional[Any] = None,
         commit: bool = True
-    ) -> Optional[TokenReuseRecord]:
+    ) -> Optional[Any]:
         event_id = event_data.get("event_id", "")
         event_type = event_data.get("event_type", "")
         time = event_data.get("time", "")
@@ -117,28 +232,42 @@ class TokenFamilyCorrelator:
         event_token_family = event_data.get("token_family")
         device_id = event_data.get("device_id")
         ip_hash = event_data.get("ip_hash")
+        country = event_data.get("country")
+        endpoint = event_data.get("endpoint")
 
         if not token_hash:
             return None
 
-        detected_reuse: Optional[TokenReuseRecord] = None
+        dt_event = parse_timestamp(time)
 
-        # 1. Check for token reuse on rotated tokens
-        # When refreshing, client presents parent_token_hash.
-        # When using/replaying, client presents token_hash.
+        detected_reuse: Optional[TokenReuseRecord] = None
+        detected_violation: Optional[DetectionRecord] = None
+
+        # ---------------------------------------------------------
+        # 1. Target Token Identification & Verification
+        # ---------------------------------------------------------
+        # When refreshing, client presents parent_token_hash as evidence of lineage.
+        # In usage/revocation/expiration, client presents token_hash.
         target_check = None
         if event_type == "token_refreshed" and parent_token_hash:
             target_check = parent_token_hash
         elif event_type not in ("token_issued", "logout", "token_revoked", "token_expired"):
             target_check = token_hash
 
+        target_record = self.tokens.get(target_check) if target_check else None
+
+        # ---------------------------------------------------------
+        # 2. DETECTION RULES
+        # ---------------------------------------------------------
+
+        # Rule A: Refresh-token reuse on rotated tokens
         if target_check:
             if db_session is not None:
                 from backend.collector.db import TokenFamilyMember as DBTokenFamilyMember, TokenReuseRecord as DBTokenReuseRecord
                 existing_db = db_session.query(DBTokenFamilyMember).filter(DBTokenFamilyMember.token_hash == target_check).first()
                 if existing_db and existing_db.is_rotated:
-                    # If this is the legitimate rotation being replayed, it is NOT a new reuse attack.
                     if event_type == "token_refreshed" and existing_db.superseded_by == token_hash:
+                        # Legitimate replay of prior rotation
                         pass
                     else:
                         reuse_key = (target_check, event_id)
@@ -160,7 +289,7 @@ class TokenFamilyCorrelator:
                                     "event_type": event_type,
                                     "device_id": device_id,
                                     "ip_hash": ip_hash,
-                                    "endpoint": event_data.get("endpoint"),
+                                    "endpoint": endpoint,
                                 }
                             )
                         else:
@@ -176,48 +305,239 @@ class TokenFamilyCorrelator:
                                     "event_type": event_type,
                                     "device_id": device_id,
                                     "ip_hash": ip_hash,
-                                    "endpoint": event_data.get("endpoint"),
+                                    "endpoint": endpoint,
                                 }
                             )
                         if reuse_key not in self._reuse_seen:
                             self.reuse_records.append(detected_reuse)
                             self._reuse_seen.add(reuse_key)
-            elif target_check in self.tokens:
-                target_record = self.tokens[target_check]
-                if target_record.is_rotated:
-                    # Legitimate rotation replay check
-                    if event_type == "token_refreshed" and target_record.superseded_by == token_hash:
-                        pass
+
+                        # Record in unified detections
+                        self._record_detection(
+                            detection_type="refresh_reuse",
+                            token_hash=target_check,
+                            token_family=existing_db.token_family,
+                            detected_at=time,
+                            attempted_event_id=event_id,
+                            severity="critical",
+                            parent_token_hash=existing_db.parent_token_hash,
+                            user_id=user_id or existing_db.user_id,
+                            chain_context=[],
+                            metadata=detected_reuse.metadata,
+                        )
+
+            elif target_record and target_record.is_rotated and target_record.status not in (TokenStatus.REVOKED, TokenStatus.EXPIRED):
+                if event_type == "token_refreshed" and target_record.superseded_by == token_hash:
+                    # Legitimate replay of prior rotation
+                    pass
+                else:
+                    reuse_key = (target_check, event_id)
+                    if reuse_key in self._reuse_seen:
+                        for r in self.reuse_records:
+                            if r.token_hash == target_check and r.attempted_event_id == event_id:
+                                detected_reuse = r
+                                break
                     else:
-                        reuse_key = (target_check, event_id)
-                        if reuse_key in self._reuse_seen:
-                            for r in self.reuse_records:
-                                if r.token_hash == target_check and r.attempted_event_id == event_id:
-                                    detected_reuse = r
-                                    break
-                        else:
-                            chain = self._walk_forward_unlocked(self._find_root_unlocked(target_check))
-                            detected_reuse = TokenReuseRecord(
-                                token_hash=target_check,
-                                token_family=target_record.token_family,
-                                reused_at=time,
+                        chain = self._walk_forward_unlocked(self._find_root_unlocked(target_check))
+                        detected_reuse = TokenReuseRecord(
+                            token_hash=target_check,
+                            token_family=target_record.token_family,
+                            reused_at=time,
+                            attempted_event_id=event_id,
+                            parent_token_hash=target_record.parent_token_hash,
+                            user_id=user_id or target_record.user_id,
+                            chain_context=chain,
+                            metadata={
+                                "event_type": event_type,
+                                "device_id": device_id,
+                                "ip_hash": ip_hash,
+                                "endpoint": endpoint,
+                            }
+                        )
+                        self.reuse_records.append(detected_reuse)
+                        self._reuse_seen.add(reuse_key)
+
+                    target_record.status = TokenStatus.REUSED
+                    # Invalidate entire family upon refresh-token reuse
+                    if target_record.token_family in self.families:
+                        for th in self.families[target_record.token_family]:
+                            if th in self.tokens:
+                                self.tokens[th].status = TokenStatus.REVOKED
+                                self.tokens[th].revoked_at = time
+                                self.tokens[th].metadata["revoked_at"] = time
+                    target_record.status = TokenStatus.REUSED
+
+                    # Record in unified detections
+                    self._record_detection(
+                        detection_type="refresh_reuse",
+                        token_hash=target_check,
+                        token_family=target_record.token_family,
+                        detected_at=time,
+                        attempted_event_id=event_id,
+                        severity="critical",
+                        parent_token_hash=target_record.parent_token_hash,
+                        user_id=user_id or target_record.user_id,
+                        chain_context=self._walk_forward_unlocked(self._find_root_unlocked(target_check)),
+                        metadata=detected_reuse.metadata if detected_reuse else {},
+                    )
+
+        # Rule B: Revoked-token use detection
+        if target_record and target_record.status == TokenStatus.REVOKED and event_type not in ("token_revoked", "logout"):
+            dt_rev = parse_timestamp(target_record.revoked_at or target_record.metadata.get("revoked_at"))
+            # If the event occurred strictly before revocation timestamp, it was valid when sent (out of order delivery)
+            if dt_event and dt_rev and dt_event < dt_rev:
+                pass
+            else:
+                det = self._record_detection(
+                    detection_type="revoked_token_use",
+                    token_hash=target_check,
+                    token_family=target_record.token_family,
+                    detected_at=time,
+                    attempted_event_id=event_id,
+                    severity="high",
+                    parent_token_hash=target_record.parent_token_hash,
+                    user_id=user_id or target_record.user_id,
+                    chain_context=self._walk_forward_unlocked(self._find_root_unlocked(target_check)),
+                    metadata={
+                        "revoked_at": target_record.revoked_at or target_record.metadata.get("revoked_at"),
+                        "attempted_at": time,
+                        "event_type": event_type,
+                        "device_id": device_id,
+                        "ip_hash": ip_hash,
+                    }
+                )
+                if not detected_violation:
+                    detected_violation = det
+
+        # Rule C: Expired-token use detection
+        if target_record and target_record.status == TokenStatus.EXPIRED and event_type not in ("token_expired", "token_issued"):
+            dt_exp = parse_timestamp(target_record.expired_at or target_record.metadata.get("expired_at"))
+            # If the event occurred strictly before expiration timestamp, it was valid when sent
+            if dt_event and dt_exp and dt_event < dt_exp:
+                pass
+            else:
+                det = self._record_detection(
+                    detection_type="expired_token_use",
+                    token_hash=target_check,
+                    token_family=target_record.token_family,
+                    detected_at=time,
+                    attempted_event_id=event_id,
+                    severity="high",
+                    parent_token_hash=target_record.parent_token_hash,
+                    user_id=user_id or target_record.user_id,
+                    chain_context=self._walk_forward_unlocked(self._find_root_unlocked(target_check)),
+                    metadata={
+                        "expired_at": target_record.expired_at or target_record.metadata.get("expired_at"),
+                        "attempted_at": time,
+                        "event_type": event_type,
+                        "device_id": device_id,
+                        "ip_hash": ip_hash,
+                    }
+                )
+                if not detected_violation:
+                    detected_violation = det
+
+        # Rule D: Concurrent-use detection (suspicious overlapping token use from distinct devices/IPs)
+        if event_type in ("token_used", "token_refreshed", "login", "suspicious_device"):
+            if token_hash in self._token_usages and dt_event:
+                for prev in reversed(self._token_usages[token_hash]):
+                    if prev["event_id"] == event_id:
+                        continue
+                    dt_prev = prev.get("datetime")
+                    if dt_prev:
+                        dt_sec = abs((dt_event - dt_prev).total_seconds())
+                        if dt_sec <= 60:
+                            prev_dev = prev.get("device_id")
+                            prev_ip = prev.get("ip_hash")
+                            # Trigger only if from different device or different IP
+                            if (device_id and prev_dev and device_id != prev_dev) or (ip_hash and prev_ip and ip_hash != prev_ip):
+                                fam = (target_record.token_family if target_record else event_token_family) or f"family-{uuid.uuid4().hex[:8]}"
+                                det = self._record_detection(
+                                    detection_type="concurrent_use",
+                                    token_hash=token_hash,
+                                    token_family=fam,
+                                    detected_at=time,
+                                    attempted_event_id=event_id,
+                                    severity="high",
+                                    user_id=user_id,
+                                    metadata={
+                                        "prior_device": prev_dev,
+                                        "current_device": device_id,
+                                        "prior_ip": prev_ip,
+                                        "current_ip": ip_hash,
+                                        "time_delta_seconds": dt_sec,
+                                        "prior_event_id": prev.get("event_id"),
+                                    }
+                                )
+                                if not detected_violation:
+                                    detected_violation = det
+                                break
+                            else:
+                                # Same device and same IP: legitimate parallel requests from same client session
+                                pass
+
+        # Rule E: Impossible-travel detection (intercontinental or distant country switch in <= 300s)
+        if country and dt_event and event_type in ("token_used", "token_refreshed", "login", "token_issued", "suspicious_location"):
+            travel_history = (
+                self._user_usages.get(user_id, [])
+                if user_id != "unknown"
+                else self._token_usages.get(token_hash, [])
+            )
+            for prev in reversed(travel_history):
+                if prev["event_id"] == event_id:
+                    continue
+                prev_country = prev.get("country")
+                if prev_country and prev_country != country:
+                    dt_prev = prev.get("datetime")
+                    if dt_prev:
+                        dt_sec = abs((dt_event - dt_prev).total_seconds())
+                        if dt_sec <= 300:  # <= 5 minutes
+                            fam = (target_record.token_family if target_record else event_token_family) or f"family-{uuid.uuid4().hex[:8]}"
+                            det = self._record_detection(
+                                detection_type="impossible_travel",
+                                token_hash=token_hash,
+                                token_family=fam,
+                                detected_at=time,
                                 attempted_event_id=event_id,
-                                parent_token_hash=target_record.parent_token_hash,
-                                user_id=user_id or target_record.user_id,
-                                chain_context=chain,
+                                severity="high",
+                                user_id=user_id,
                                 metadata={
-                                    "event_type": event_type,
-                                    "device_id": device_id,
-                                    "ip_hash": ip_hash,
-                                    "endpoint": event_data.get("endpoint"),
+                                    "origin_country": prev_country,
+                                    "dest_country": country,
+                                    "time_delta_seconds": dt_sec,
+                                    "prior_event_id": prev.get("event_id"),
                                 }
                             )
-                            self.reuse_records.append(detected_reuse)
-                            self._reuse_seen.add(reuse_key)
+                            if not detected_violation:
+                                detected_violation = det
+                            break
 
-        # 2. Handle token lifecycle state machine transitions
+        # Record usage history (idempotently per event_id)
+        if dt_event:
+            usage_entry = {
+                "event_id": event_id,
+                "time": time,
+                "datetime": dt_event,
+                "device_id": device_id,
+                "ip_hash": ip_hash,
+                "country": country,
+            }
+            if token_hash not in self._token_usages:
+                self._token_usages[token_hash] = []
+            if not any(u["event_id"] == event_id for u in self._token_usages[token_hash]):
+                self._token_usages[token_hash].append(usage_entry)
+
+            if user_id and user_id != "unknown":
+                if user_id not in self._user_usages:
+                    self._user_usages[user_id] = []
+                if not any(u["event_id"] == event_id for u in self._user_usages[user_id]):
+                    self._user_usages[user_id].append(usage_entry)
+
+        # ---------------------------------------------------------
+        # 3. TOKEN LIFECYCLE STATE MACHINE TRANSITIONS
+        # ---------------------------------------------------------
         if event_type == "token_refreshed" and parent_token_hash:
-            # Resolve parent
+            # Resolve parent token
             if parent_token_hash in self.tokens:
                 parent = self.tokens[parent_token_hash]
                 family_id = parent.token_family
@@ -248,7 +568,7 @@ class TokenFamilyCorrelator:
                 child.token_family = family_id
                 child.issued_at = child.issued_at or time
                 child.user_id = user_id or child.user_id
-                if child.status not in (TokenStatus.REVOKED, TokenStatus.EXPIRED):
+                if child.status not in (TokenStatus.REVOKED, TokenStatus.EXPIRED, TokenStatus.ROTATED, TokenStatus.REUSED):
                     child.status = TokenStatus.ACTIVE
             else:
                 child = TokenRecord(
@@ -277,15 +597,22 @@ class TokenFamilyCorrelator:
                 self._register_token(token)
             else:
                 existing = self.tokens[token_hash]
-                if existing.status not in (TokenStatus.REVOKED, TokenStatus.EXPIRED, TokenStatus.ROTATED):
+                existing.issued_at = existing.issued_at or time
+                if parent_token_hash and not existing.parent_token_hash:
+                    existing.parent_token_hash = parent_token_hash
+                if event_token_family and not existing.token_family:
+                    existing.token_family = event_token_family
+                # Never overwrite terminal or rotated lifecycle states with ACTIVE
+                if existing.status not in (TokenStatus.REVOKED, TokenStatus.EXPIRED, TokenStatus.ROTATED, TokenStatus.REUSED):
                     existing.status = TokenStatus.ACTIVE
 
         elif event_type == "logout":
-            # Logout revokes the token and the entire associated token family
+            # Explicit logout triggers family-level revocation
             family_to_revoke = event_token_family
             if token_hash in self.tokens:
                 family_to_revoke = family_to_revoke or self.tokens[token_hash].token_family
                 self.tokens[token_hash].status = TokenStatus.REVOKED
+                self.tokens[token_hash].revoked_at = time
                 self.tokens[token_hash].metadata["revoked_at"] = time
             elif token_hash:
                 family_id = event_token_family or f"family-{uuid.uuid4().hex[:8]}"
@@ -295,6 +622,7 @@ class TokenFamilyCorrelator:
                     parent_token_hash=parent_token_hash,
                     issued_at=time,
                     status=TokenStatus.REVOKED,
+                    revoked_at=time,
                     user_id=user_id,
                     session_id=device_id,
                     metadata={"revoked_at": time}
@@ -306,38 +634,50 @@ class TokenFamilyCorrelator:
                 for th in self.families[family_to_revoke]:
                     if th in self.tokens:
                         self.tokens[th].status = TokenStatus.REVOKED
+                        self.tokens[th].revoked_at = time
                         self.tokens[th].metadata["revoked_at"] = time
 
         elif event_type == "token_revoked":
-            family_to_revoke = event_token_family
-            if token_hash in self.tokens:
-                family_to_revoke = family_to_revoke or self.tokens[token_hash].token_family
-                self.tokens[token_hash].status = TokenStatus.REVOKED
-                self.tokens[token_hash].metadata["revoked_at"] = time
-            elif token_hash:
-                family_id = event_token_family or f"family-{uuid.uuid4().hex[:8]}"
-                token = TokenRecord(
-                    token_hash=token_hash,
-                    token_family=family_id,
-                    parent_token_hash=parent_token_hash,
-                    issued_at=time,
-                    status=TokenStatus.REVOKED,
-                    user_id=user_id,
-                    session_id=device_id,
-                    metadata={"revoked_at": time}
-                )
-                self._register_token(token)
-                family_to_revoke = family_to_revoke or family_id
-
-            if event_token_family and event_token_family in self.families:
-                for th in self.families[event_token_family]:
-                    if th in self.tokens:
-                        self.tokens[th].status = TokenStatus.REVOKED
-                        self.tokens[th].metadata["revoked_at"] = time
+            # Determine revocation scope: "family" or "token" (default)
+            scope = event_data.get("revocation_scope") or event_data.get("metadata", {}).get("scope", "token")
+            if scope == "family":
+                family_to_revoke = event_token_family or (self.tokens[token_hash].token_family if token_hash in self.tokens else None)
+                if token_hash in self.tokens:
+                    self.tokens[token_hash].status = TokenStatus.REVOKED
+                    self.tokens[token_hash].revoked_at = time
+                    self.tokens[token_hash].metadata["revoked_at"] = time
+                if family_to_revoke and family_to_revoke in self.families:
+                    for th in self.families[family_to_revoke]:
+                        if th in self.tokens:
+                            self.tokens[th].status = TokenStatus.REVOKED
+                            self.tokens[th].revoked_at = time
+                            self.tokens[th].metadata["revoked_at"] = time
+            else:
+                # Token-level revocation: invalidate only this specific token
+                if token_hash in self.tokens:
+                    self.tokens[token_hash].status = TokenStatus.REVOKED
+                    self.tokens[token_hash].revoked_at = time
+                    self.tokens[token_hash].metadata["revoked_at"] = time
+                elif token_hash:
+                    family_id = event_token_family or f"family-{uuid.uuid4().hex[:8]}"
+                    token = TokenRecord(
+                        token_hash=token_hash,
+                        token_family=family_id,
+                        parent_token_hash=parent_token_hash,
+                        issued_at=time,
+                        status=TokenStatus.REVOKED,
+                        revoked_at=time,
+                        user_id=user_id,
+                        session_id=device_id,
+                        metadata={"revoked_at": time}
+                    )
+                    self._register_token(token)
 
         elif event_type == "token_expired":
+            # Normal token expiration: sets status to EXPIRED; benign (zero alerts)
             if token_hash in self.tokens:
                 self.tokens[token_hash].status = TokenStatus.EXPIRED
+                self.tokens[token_hash].expired_at = time
                 self.tokens[token_hash].metadata["expired_at"] = time
             elif token_hash:
                 family_id = event_token_family or f"family-{uuid.uuid4().hex[:8]}"
@@ -347,17 +687,20 @@ class TokenFamilyCorrelator:
                     parent_token_hash=parent_token_hash,
                     issued_at=time,
                     status=TokenStatus.EXPIRED,
+                    expired_at=time,
                     user_id=user_id,
                     session_id=device_id,
                     metadata={"expired_at": time}
                 )
                 self._register_token(token)
 
-        # 3. Synchronize with database session if provided
+        # ---------------------------------------------------------
+        # 4. Synchronize with database session if provided
+        # ---------------------------------------------------------
         if db_session is not None:
             self._sync_db(event_data, db_session, detected_reuse, commit=commit)
 
-        return detected_reuse
+        return detected_reuse or detected_violation
 
     def _register_token(self, token: TokenRecord):
         self.tokens[token.token_hash] = token
@@ -723,6 +1066,17 @@ def reconstruct_chain(
     """Module-level helper delegating to the production TokenFamilyCorrelator."""
     c = correlator or _default_correlator
     return c.reconstruct_chain(token_hash_or_family, db_session=db_session)
+
+
+def get_detection_records(
+    detection_type: Optional[str] = None,
+    token_family: Optional[str] = None,
+    token_hash: Optional[str] = None,
+    correlator: Optional[TokenFamilyCorrelator] = None,
+) -> List[DetectionRecord]:
+    """Module-level helper delegating to the production TokenFamilyCorrelator."""
+    c = correlator or _default_correlator
+    return c.get_detection_records(detection_type=detection_type, token_family=token_family, token_hash=token_hash)
 
 
 def process_event_file(
