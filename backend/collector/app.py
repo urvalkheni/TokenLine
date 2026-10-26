@@ -1,6 +1,7 @@
 import hmac
+import sys
 from functools import wraps
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, current_app, has_app_context
 from werkzeug.exceptions import RequestEntityTooLarge
 import json
 import os
@@ -264,42 +265,254 @@ def get_auth_token():
             return key
     return None
 
-def get_configured_api_keys():
-    """Returns mapping of token -> role configured from environment variables."""
-    keys = {}
+SUPPORTED_ROLES = {"admin", "ingest", "read"}
 
-    # 1. From JSON env if present
-    env_keys_json = os.environ.get("COLLECTOR_API_KEYS")
-    if env_keys_json:
+PUBLISHED_DEFAULT_KEYS = {
+    "tokenline-admin-secret",
+    "tokenline-ingest-secret",
+    "tokenline-read-secret",
+    "default",
+    "secret",
+    "admin",
+    "password",
+    "changeme",
+    "123456",
+}
+
+
+def get_environment_mode(app_config=None):
+    """
+    Returns the resolved execution mode: 'production', 'development', 'test', or 'invalid'.
+    Explicit dev/test mode must be enabled to allow safe fallbacks.
+    """
+    if app_config and app_config.get("TESTING"):
+        return "test"
+
+    raw = (
+        (app_config and app_config.get("TOKENLINE_ENV"))
+        or os.environ.get("TOKENLINE_ENV")
+        or os.environ.get("FLASK_ENV")
+        or os.environ.get("ENV")
+        or os.environ.get("APP_ENV")
+    )
+    if raw:
+        s = str(raw).strip().lower()
+        if s in ("development", "dev", "local"):
+            return "development"
+        if s in ("test", "testing"):
+            return "test"
+        if s in ("production", "prod"):
+            return "production"
+        return "invalid"
+
+    if "PYTEST_CURRENT_TEST" in os.environ or "pytest" in sys.modules:
+        return "test"
+
+    return "production"
+
+
+def validate_origin(origin_str):
+    """
+    Validates that origin_str conforms to RFC 6454 (scheme://host[:port]).
+    Rejects wildcards, paths (other than optional root /), query strings, and fragments.
+    """
+    if not origin_str or not isinstance(origin_str, str):
+        return False
+    s = origin_str.strip()
+    if s == "*":
+        return False
+    try:
+        parsed = urllib.parse.urlparse(s)
+        if parsed.scheme not in ("http", "https"):
+            return False
+        if not parsed.netloc:
+            return False
+        if parsed.path and parsed.path != "/":
+            return False
+        if parsed.query or parsed.fragment:
+            return False
+        if parsed.username or parsed.password:
+            return False
+        return True
+    except Exception:
+        return False
+
+
+def parse_cors_origins(raw):
+    """Parses raw CORS allowed origins string or iterable into a list of strings."""
+    if not raw:
+        return []
+    if isinstance(raw, (list, set, tuple)):
+        return [str(o).strip() for o in raw if str(o).strip()]
+    s = str(raw).strip()
+    if s.startswith("[") and s.endswith("]"):
         try:
-            parsed = json.loads(env_keys_json)
-            if isinstance(parsed, dict):
-                keys.update(parsed)
+            parsed = json.loads(s)
+            if isinstance(parsed, list):
+                return [str(o).strip() for o in parsed if str(o).strip()]
         except Exception:
             pass
+    return [o.strip() for o in s.split(",") if o.strip()]
+
+
+def validate_and_load_cors_origins(mode, app_config=None):
+    """
+    Validates and resolves the allowlist of CORS origins.
+    In production mode:
+      - Requires explicitly configured origins.
+      - Rejects wildcards ('*').
+      - Rejects malformed origin URLs.
+    In test/development mode:
+      - Defaults to local origins if unset.
+    """
+    raw = (app_config and app_config.get("CORS_ALLOWED_ORIGINS")) or os.environ.get("CORS_ALLOWED_ORIGINS")
+    origins = parse_cors_origins(raw)
+
+    is_dev_or_test = mode in ("development", "test")
+
+    if not is_dev_or_test:
+        if not origins:
+            raise ValueError(
+                "Collector configuration error: CORS_ALLOWED_ORIGINS must be explicitly configured in production."
+            )
+        for o in origins:
+            if o == "*":
+                raise ValueError(
+                    "Collector configuration error: Wildcard CORS origins ('*') are forbidden in production."
+                )
+            if not validate_origin(o):
+                raise ValueError(
+                    f"Collector configuration error: Malformed CORS origin '{o}'. Must be a valid http/https URL without path or query."
+                )
+    else:
+        if not origins:
+            origins = [
+                "http://localhost:3000",
+                "http://127.0.0.1:3000",
+                "http://localhost:5000",
+                "http://127.0.0.1:5000",
+            ]
+        else:
+            for o in origins:
+                if o != "*" and not validate_origin(o):
+                    raise ValueError(
+                        f"Collector configuration error: Malformed CORS origin '{o}'."
+                    )
+
+    return {o.rstrip("/") for o in origins}
+
+
+def validate_and_load_api_keys(mode, app_config=None):
+    """
+    Validates and resolves the mapping of API Key -> Role.
+    In production mode:
+      - Requires explicitly configured, valid credentials.
+      - Rejects published or hardcoded default keys.
+      - Rejects weak keys (< 16 characters).
+      - Validates roles against SUPPORTED_ROLES.
+      - Rejects malformed JSON in COLLECTOR_API_KEYS.
+    In test/development mode:
+      - Allows safe fallback test credentials if none are configured.
+    """
+    keys = {}
+    is_dev_or_test = mode in ("development", "test")
+
+    # 1. JSON mapping from COLLECTOR_API_KEYS
+    env_keys_raw = (app_config and app_config.get("COLLECTOR_API_KEYS")) or os.environ.get("COLLECTOR_API_KEYS")
+    if env_keys_raw is not None:
+        if isinstance(env_keys_raw, dict):
+            parsed = env_keys_raw
+        elif isinstance(env_keys_raw, str):
+            if not env_keys_raw.strip():
+                if not is_dev_or_test:
+                    raise ValueError("Collector configuration error: COLLECTOR_API_KEYS cannot be empty in production.")
+                parsed = {}
+            else:
+                try:
+                    parsed = json.loads(env_keys_raw)
+                except Exception as e:
+                    raise ValueError("Collector configuration error: COLLECTOR_API_KEYS contains malformed JSON.") from e
+        else:
+            raise ValueError("Collector configuration error: COLLECTOR_API_KEYS must be a JSON object mapping keys to roles.")
+
+        if not isinstance(parsed, dict):
+            raise ValueError("Collector configuration error: COLLECTOR_API_KEYS must be a JSON object mapping keys to roles.")
+
+        for raw_key, role in parsed.items():
+            if not isinstance(raw_key, str) or not raw_key.strip():
+                raise ValueError("Collector configuration error: API key must be a non-empty string.")
+            if not isinstance(role, str) or role.strip().lower() not in SUPPORTED_ROLES:
+                raise ValueError(
+                    f"Collector configuration error: Unsupported role '{role}'. Supported roles are: {', '.join(sorted(SUPPORTED_ROLES))}."
+                )
+            keys[raw_key.strip()] = role.strip().lower()
 
     # 2. Individual environment variables
-    admin_key = os.environ.get("COLLECTOR_ADMIN_API_KEY") or os.environ.get("ADMIN_API_KEY") or os.environ.get("TOKENLINE_ADMIN_KEY")
-    if admin_key:
-        keys[admin_key] = "admin"
+    admin_key = (
+        (app_config and app_config.get("COLLECTOR_ADMIN_API_KEY"))
+        or os.environ.get("COLLECTOR_ADMIN_API_KEY")
+        or os.environ.get("ADMIN_API_KEY")
+        or os.environ.get("TOKENLINE_ADMIN_KEY")
+    )
+    if admin_key is not None:
+        if not str(admin_key).strip():
+            raise ValueError("Collector configuration error: Admin API key cannot be empty.")
+        keys[str(admin_key).strip()] = "admin"
 
-    ingest_key = os.environ.get("COLLECTOR_INGEST_API_KEY") or os.environ.get("INGEST_API_KEY") or os.environ.get("TOKENLINE_INGEST_KEY")
-    if ingest_key:
-        keys[ingest_key] = "ingest"
+    ingest_key = (
+        (app_config and app_config.get("COLLECTOR_INGEST_API_KEY"))
+        or os.environ.get("COLLECTOR_INGEST_API_KEY")
+        or os.environ.get("INGEST_API_KEY")
+        or os.environ.get("TOKENLINE_INGEST_KEY")
+    )
+    if ingest_key is not None:
+        if not str(ingest_key).strip():
+            raise ValueError("Collector configuration error: Ingest API key cannot be empty.")
+        keys[str(ingest_key).strip()] = "ingest"
 
-    read_key = os.environ.get("COLLECTOR_READ_API_KEY") or os.environ.get("READ_API_KEY") or os.environ.get("TOKENLINE_READ_KEY")
-    if read_key:
-        keys[read_key] = "read"
+    read_key = (
+        (app_config and app_config.get("COLLECTOR_READ_API_KEY"))
+        or os.environ.get("COLLECTOR_READ_API_KEY")
+        or os.environ.get("READ_API_KEY")
+        or os.environ.get("TOKENLINE_READ_KEY")
+    )
+    if read_key is not None:
+        if not str(read_key).strip():
+            raise ValueError("Collector configuration error: Read API key cannot be empty.")
+        keys[str(read_key).strip()] = "read"
 
-    # Default fallback keys for development / test environments if no env vars set
-    if not keys:
-        keys = {
-            "tokenline-admin-secret": "admin",
-            "tokenline-ingest-secret": "ingest",
-            "tokenline-read-secret": "read"
-        }
+    if mode == "invalid":
+        raise ValueError(
+            "Collector configuration error: Unrecognized environment mode setting. Production mode required or explicitly set to development/test."
+        )
+
+    if not is_dev_or_test:
+        if not keys:
+            raise ValueError("Collector configuration error: Missing required collector API credentials in production.")
+
+        for k, role in list(keys.items()):
+            if k.lower() in PUBLISHED_DEFAULT_KEYS:
+                raise ValueError("Collector configuration error: Published default credentials cannot be used in production.")
+            if len(k) < 16:
+                raise ValueError("Collector configuration error: Collector API keys must be at least 16 characters long in production.")
+    else:
+        if not keys:
+            keys = {
+                "tokenline-admin-secret": "admin",
+                "tokenline-ingest-secret": "ingest",
+                "tokenline-read-secret": "read",
+            }
 
     return keys
+
+
+def get_configured_api_keys():
+    """Returns mapping of token -> role configured from application context or environment."""
+    if has_app_context() and "COLLECTOR_API_KEYS_MAP" in current_app.config:
+        return current_app.config["COLLECTOR_API_KEYS_MAP"]
+    mode = get_environment_mode()
+    return validate_and_load_api_keys(mode)
+
 
 def authenticate_request():
     """
@@ -329,6 +542,7 @@ def authenticate_request():
 
     return user_role, None
 
+
 def require_auth(allowed_roles=None):
     """
     Decorator enforcing authentication and role-based authorization.
@@ -347,6 +561,13 @@ def require_auth(allowed_roles=None):
         @wraps(f)
         def wrapper(*args, **kwargs):
             if request.method == "OPTIONS":
+                origin = request.headers.get("Origin")
+                if origin and has_app_context():
+                    allowed = current_app.config.get("CORS_ALLOWED_ORIGINS_SET", set())
+                    is_dev_or_test = current_app.config.get("TOKENLINE_ENV_MODE") in ("development", "test")
+                    norm_origin = origin.rstrip("/")
+                    if norm_origin not in allowed and not (is_dev_or_test and "*" in allowed):
+                        return jsonify({"error": "Forbidden", "message": "CORS origin not allowed"}), 403
                 return f(*args, **kwargs)
 
             role, error_response = authenticate_request()
@@ -373,6 +594,14 @@ def create_app(test_config=None):
     app = Flask(__name__, static_folder=FRONTEND_DIR, static_url_path="")
     if test_config:
         app.config.update(test_config)
+
+    mode = get_environment_mode(app.config)
+    api_keys = validate_and_load_api_keys(mode, app.config)
+    allowed_origins = validate_and_load_cors_origins(mode, app.config)
+
+    app.config["TOKENLINE_ENV_MODE"] = mode
+    app.config["COLLECTOR_API_KEYS_MAP"] = api_keys
+    app.config["CORS_ALLOWED_ORIGINS_SET"] = allowed_origins
 
     # Maximum request body size: 10 MB (10 * 1024 * 1024 bytes)
     MAX_CONTENT_LENGTH = 10 * 1024 * 1024
@@ -687,9 +916,11 @@ def create_app(test_config=None):
         ]
         return jsonify(scenarios[offset:offset + limit]), 200
 
-    @app.route("/api/scenarios/<scenario_name>/run", methods=["POST"])
+    @app.route("/api/scenarios/<scenario_name>/run", methods=["POST", "OPTIONS"])
     @require_auth({"admin"})
     def run_simulator_scenario(scenario_name):
+        if request.method == "OPTIONS":
+            return jsonify({}), 200
         if len(scenario_name) > 64:
             return jsonify({"error": "scenario_name exceeds maximum allowed length of 64 characters"}), 400
 
@@ -741,9 +972,24 @@ def create_app(test_config=None):
 
     @app.after_request
     def add_cors_headers(response):
-        response.headers['Access-Control-Allow-Origin'] = '*'
-        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+        origin = request.headers.get("Origin")
+        if origin:
+            norm_origin = origin.rstrip("/")
+            allowed = app.config.get("CORS_ALLOWED_ORIGINS_SET", set())
+            is_dev_or_test = app.config.get("TOKENLINE_ENV_MODE") in ("development", "test")
+            if norm_origin in allowed or (is_dev_or_test and "*" in allowed):
+                response.headers["Access-Control-Allow-Origin"] = origin
+                response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+                response.headers["Access-Control-Allow-Headers"] = (
+                    "Content-Type, Authorization, X-API-Key, X-Request-ID, X-Correlation-ID"
+                )
+                response.headers["Access-Control-Max-Age"] = "86400"
+                existing_vary = response.headers.get("Vary")
+                if existing_vary:
+                    if "Origin" not in existing_vary:
+                        response.headers["Vary"] = f"{existing_vary}, Origin"
+                else:
+                    response.headers["Vary"] = "Origin"
         return response
 
     return app

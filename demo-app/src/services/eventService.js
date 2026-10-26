@@ -4,6 +4,7 @@
  * and emits them to the Python Event Collector service.
  */
 const crypto = require('crypto');
+const config = require('../config');
 
 function emit(eventName, payload) {
   // Safe console logging
@@ -98,10 +99,14 @@ function emit(eventName, payload) {
   }
 
   // Send the event to the Event Collector API
-  const collectorUrl = process.env.COLLECTOR_URL || 'http://127.0.0.1:5000/events';
+  const collectorUrl = config.collectorUrl || process.env.COLLECTOR_URL || 'http://127.0.0.1:5000/events';
+  const headers = { 'Content-Type': 'application/json' };
+  if (config.collectorApiKey) {
+    headers['X-API-Key'] = config.collectorApiKey;
+  }
   fetch(collectorUrl, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify(canonicalPayload)
   })
   .then(res => {
