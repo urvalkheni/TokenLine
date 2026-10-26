@@ -105,6 +105,18 @@ class TokenReuseRecord(Base):
     attempted_event_id = Column(String, nullable=False)
 
 
+class ScenarioExecution(Base):
+    __tablename__ = "scenario_executions"
+
+    id = Column(String, primary_key=True)
+    scenario_name = Column(String, nullable=False, index=True)
+    started_at = Column(TimezoneAwareDateTime, nullable=False)
+    completed_at = Column(TimezoneAwareDateTime, nullable=True)
+    status = Column(String, nullable=False)  # "running", "success", "failed"
+    event_count = Column(Integer, default=0)
+    error_message = Column(String, nullable=True)
+
+
 _engine = None
 _cached_url = None
 _SessionLocal = None
@@ -155,12 +167,24 @@ def init_db():
     run_migrations(engine)
 
 
-def insert_event(event_data):
-    db = get_session()
+def insert_event(event_data, session=None):
+    """
+    Inserts a canonical event into the database idempotently.
+    If session is provided, stages insertion within the caller's active transaction (via session.flush()).
+    If session is None, manages an isolated session with commit/rollback.
+    """
+    from sqlalchemy.exc import IntegrityError
+
+    own_session = False
+    if session is None:
+        session = get_session()
+        own_session = True
+
     try:
         # Idempotent insert: if event_id already exists, return existing record
-        existing = db.query(Event).filter(Event.event_id == event_data["event_id"]).first()
+        existing = session.query(Event).filter(Event.event_id == event_data["event_id"]).first()
         if existing:
+            setattr(existing, "_is_new", False)
             return existing
 
         db_event = Event(
@@ -181,11 +205,25 @@ def insert_event(event_data):
             source=event_data.get("source"),
             is_simulation=event_data.get("is_simulation", False),
         )
-        db.add(db_event)
-        db.commit()
+        session.add(db_event)
+        if own_session:
+            session.commit()
+        else:
+            session.flush()
+        setattr(db_event, "_is_new", True)
         return db_event
+    except IntegrityError as ie:
+        if own_session:
+            session.rollback()
+            existing = session.query(Event).filter(Event.event_id == event_data["event_id"]).first()
+            if existing:
+                setattr(existing, "_is_new", False)
+                return existing
+        raise ie
     except Exception as e:
-        db.rollback()
+        if own_session:
+            session.rollback()
         raise e
     finally:
-        db.close()
+        if own_session:
+            session.close()

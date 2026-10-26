@@ -211,11 +211,33 @@ def downgrade_004(conn, engine):
     pass
 
 
+def upgrade_005(conn, engine):
+    """Create scenario_executions table for atomic execution tracking."""
+    conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS scenario_executions (
+            id VARCHAR PRIMARY KEY,
+            scenario_name VARCHAR NOT NULL,
+            started_at VARCHAR NOT NULL,
+            completed_at VARCHAR,
+            status VARCHAR NOT NULL,
+            event_count INTEGER DEFAULT 0,
+            error_message VARCHAR
+        )
+    """))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_scenario_executions_scenario_name ON scenario_executions (scenario_name)"))
+
+
+def downgrade_005(conn, engine):
+    conn.execute(text("DROP INDEX IF EXISTS ix_scenario_executions_scenario_name"))
+    conn.execute(text("DROP TABLE IF EXISTS scenario_executions"))
+
+
 MIGRATIONS = {
     "001_initial_schema": (upgrade_001, downgrade_001),
     "002_add_indexes_and_constraints": (upgrade_002, downgrade_002),
     "003_convert_timestamps_to_timezone_aware": (upgrade_003, downgrade_003),
     "004_canonical_schema_fields": (upgrade_004, downgrade_004),
+    "005_scenario_executions": (upgrade_005, downgrade_005),
 }
 
 
@@ -227,3 +249,4 @@ def run_migrations(engine=None):
     mgr = MigrationManager(engine)
     mgr.apply_all()
     return mgr
+

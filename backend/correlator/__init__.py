@@ -4,6 +4,7 @@ from backend.correlator.engine import (
     process_event,
     reconstruct_chain,
     process_event_file,
+    correlator_transaction,
 )
 
 __all__ = [
@@ -14,4 +15,6 @@ __all__ = [
     "process_event",
     "reconstruct_chain",
     "process_event_file",
+    "correlator_transaction",
 ]
+
