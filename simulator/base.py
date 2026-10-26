@@ -61,11 +61,16 @@ class BaseScenarioGenerator:
             "event_type": event_type,
             "time": event_time,
             "user_id": user_id,
-            "token_hash": token_hash,
             "ip_hash": ip_hash,
             "device_id": device_id,
             "result": result,
+            "schema_version": "1.0.0",
+            "source": "simulator",
+            "is_simulation": True,
         }
+
+        if token_hash is not None:
+            event["token_hash"] = token_hash
 
         if token_family:
             event["token_family"] = token_family

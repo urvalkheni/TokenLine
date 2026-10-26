@@ -743,7 +743,10 @@ def create_app(test_config=None):
                     "device_id": ev.device_id,
                     "user_agent_family": ev.user_agent_family,
                     "endpoint": ev.endpoint,
-                    "result": ev.result
+                    "result": ev.result,
+                    "schema_version": ev.schema_version,
+                    "source": ev.source,
+                    "is_simulation": bool(ev.is_simulation) if ev.is_simulation is not None else False
                 })
             return jsonify(result), 200
         except Exception as e:

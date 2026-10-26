@@ -75,13 +75,22 @@ def run_all_scenarios(seed: int = 42) -> Dict[str, List[Dict[str, Any]]]:
     return results
 
 
-def submit_to_collector(events: List[Dict[str, Any]], collector_url: str) -> bool:
+def submit_to_collector(events: List[Dict[str, Any]], collector_url: str, api_key: Optional[str] = None) -> bool:
     """Submits a list of generated synthetic events to the Event Collector."""
     print(f"Submitting {len(events)} events to Collector at {collector_url}...")
+    headers = {"Content-Type": "application/json"}
+    if not api_key:
+        api_key = (
+            os.environ.get("COLLECTOR_INGEST_API_KEY")
+            or os.environ.get("COLLECTOR_ADMIN_API_KEY")
+            or os.environ.get("COLLECTOR_API_KEY")
+        )
+    if api_key:
+        headers["X-API-Key"] = api_key
     success = 0
     for evt in events:
         try:
-            res = requests.post(collector_url, json=evt, timeout=5)
+            res = requests.post(collector_url, json=evt, headers=headers, timeout=5)
             if res.status_code in [200, 201]:
                 print(f"  [OK] {evt['event_id']} ({evt['event_type']}) -> Status {res.status_code}")
                 success += 1
