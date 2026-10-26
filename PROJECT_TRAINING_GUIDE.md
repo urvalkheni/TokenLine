@@ -307,10 +307,18 @@ Configuration is controlled via environment variables (loaded from `.env`):
 
 | Variable | Default Value | Purpose |
 | :--- | :--- | :--- |
-| `PORT` | `5000` | Port for the Python Flask Event Collector service. |
+| `TOKENLINE_ENV` / `NODE_ENV` | `production` (if unset) | Environment mode (`development`, `test`, or `production`). Safe defaults only permitted when explicitly set to development/test. |
+| `PORT` | `5000` | Port for the Python Flask Event Collector service (Node demo app defaults to `3000`). |
 | `DATABASE_URL` | `sqlite:///./tokenline.db` | Connection string for SQLite or Neon PostgreSQL database. |
-| `NODE_ENV` | `development` | Node.js runtime environment for the demo application. |
-| `TOKENLINE_HMAC_SECRET` | *(Random default)* | Secret key used to compute privacy-preserving token HMACs. |
+| `COLLECTOR_ADMIN_API_KEY` | *(None)* | Strong API key for administrator endpoints (min 16 chars). Required in production. |
+| `COLLECTOR_INGEST_API_KEY` | *(None)* | Strong API key for event ingestion endpoints (min 16 chars). Required in production. |
+| `COLLECTOR_READ_API_KEY` | *(None)* | Strong API key for event read/visualization endpoints (min 16 chars). Required in production. |
+| `COLLECTOR_API_KEYS` | *(None)* | JSON mapping `{ "key": "role" }` of API keys to roles (`admin`, `ingest`, `read`). |
+| `CORS_ALLOWED_ORIGINS` | *(None)* | Explicit comma-separated allowlist of trusted frontend origins. Required in production; wildcards prohibited. |
+| `JWT_SECRET` | *(None)* | Secret key for demo app JWT access tokens (min 32 chars). Required in production. |
+| `TOKEN_HMAC_SECRET` | *(None)* | Secret key used to compute privacy-preserving token HMACs (min 32 chars). Required in production. |
+| `COLLECTOR_URL` | `http://127.0.0.1:5000/events` | Event Collector ingestion endpoint for demo application. |
+| `COLLECTOR_API_KEY` | *(None)* | Ingestion API key presented by demo app when emitting events to the collector. |
 
 ---
 

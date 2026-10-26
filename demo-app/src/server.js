@@ -1,10 +1,12 @@
 const express = require('express');
 const config = require('./config');
+const { corsMiddleware } = require('./middleware/cors');
 const authRoutes = require('./routes/auth');
 const protectedRoutes = require('./routes/protected');
 
 const app = express();
 
+app.use(corsMiddleware);
 app.use(express.json());
 
 // Routes

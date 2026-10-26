@@ -24,7 +24,15 @@ Copy the `.env.example` file to `.env`:
 ```bash
 cp .env.example .env
 ```
-Ensure `JWT_SECRET` is set to something local and random for testing. Never commit production secrets.
+
+### Environment Modes and Security Rules:
+- **`NODE_ENV`**: Set to `development` or `test` for local testing. If set to `production` (or unset), the application enforces strict production validation at startup:
+  - `JWT_SECRET`: Must be explicitly configured (minimum 32 characters, no default/placeholder values).
+  - `TOKEN_HMAC_SECRET`: Must be explicitly configured (minimum 32 characters, no default/placeholder values).
+  - `CORS_ALLOWED_ORIGINS`: Must be an explicit comma-separated allowlist of trusted frontend origins. Wildcard `*` origins are strictly prohibited in production.
+  - `COLLECTOR_API_KEY`: If configured, must be at least 16 characters and not use published default credentials.
+- Insecure default values and fallback secrets are strictly prohibited in production execution paths and cannot be silently enabled.
+- Sensitive secret values are never logged or exposed in error messages.
 
 ## 6. Synthetic Credentials
 A single synthetic user is hardcoded for demonstration purposes:
