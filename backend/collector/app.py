@@ -14,8 +14,9 @@ load_dotenv()
 
 import math
 import urllib.parse
+
+
 from collections import Counter
-from datetime import datetime
 import jsonschema
 from jsonschema import validate, ValidationError
 
@@ -34,12 +35,44 @@ def check_datetime(val):
     except Exception:
         return False
 
+import uuid
+from datetime import datetime, timezone
+from sqlalchemy.exc import IntegrityError
+
+
 try:
-    from backend.collector.db import init_db, insert_event, get_session, Event, TokenFamilyMember, TokenReuseRecord
-    from backend.correlator import TokenFamilyCorrelator, process_event, reconstruct_chain
+    from backend.collector.db import (
+        init_db,
+        insert_event,
+        get_session,
+        Event,
+        TokenFamilyMember,
+        TokenReuseRecord,
+        ScenarioExecution,
+    )
+    from backend.correlator import (
+        TokenFamilyCorrelator,
+        process_event,
+        reconstruct_chain,
+        correlator_transaction,
+    )
 except ImportError:
-    from db import init_db, insert_event, get_session, Event, TokenFamilyMember, TokenReuseRecord
-    from backend.correlator import TokenFamilyCorrelator, process_event, reconstruct_chain
+    from db import (
+        init_db,
+        insert_event,
+        get_session,
+        Event,
+        TokenFamilyMember,
+        TokenReuseRecord,
+        ScenarioExecution,
+    )
+    from backend.correlator import (
+        TokenFamilyCorrelator,
+        process_event,
+        reconstruct_chain,
+        correlator_transaction,
+    )
+
 
 try:
     from simulator.runner import run_scenario
@@ -668,52 +701,56 @@ def create_app(test_config=None):
         except Exception as e:
             return jsonify({"error": f"Validation error: {str(e)}"}), 400
 
-        # Store event in the database
+        # Store event in the database within a single atomic transaction
+        db_sess = get_session()
         try:
-            db_sess = get_session()
-            existing_event = None
-            try:
-                existing_event = db_sess.query(Event).filter(Event.event_id == data["event_id"]).first()
-            finally:
-                db_sess.close()
-
+            existing_event = db_sess.query(Event).filter(Event.event_id == data["event_id"]).first()
             if existing_event:
-                db_sess = get_session()
-                try:
-                    process_event(data, db_sess)
-                except Exception as e:
-                    db_sess.rollback()
-                    logger.error(f"Correlation failed for existing event {data.get('event_id')}: {e}", exc_info=True)
-                    return jsonify({
-                        "error": "Correlation error",
-                        "message": f"Correlation failed: {str(e)}"
-                    }), 500
-                finally:
-                    db_sess.close()
                 return jsonify({"status": "event already exists"}), 200
 
-            insert_event(data)
-            # Correlate token families in real-time
-            db_sess = get_session()
             try:
-                process_event(data, db_sess)
+                with correlator_transaction():
+                    db_event = insert_event(data, session=db_sess)
+                    if not getattr(db_event, "_is_new", True):
+                        db_sess.commit()
+                        return jsonify({"status": "event already exists"}), 200
+
+                    try:
+                        process_event(data, db_sess)
+                    except Exception as corr_err:
+                        logger.error(f"Correlation failed for event {data.get('event_id')}: {corr_err}", exc_info=True)
+                        raise corr_err
+                    db_sess.commit()
+            except IntegrityError:
+                raise
             except Exception as e:
                 db_sess.rollback()
-                logger.error(f"Correlation failed for event {data.get('event_id')}: {e}", exc_info=True)
                 return jsonify({
                     "error": "Correlation error",
                     "message": f"Correlation failed: {str(e)}"
                 }), 500
-            finally:
-                db_sess.close()
+
+            return jsonify({"status": "event persisted"}), 201
+        except IntegrityError:
+            db_sess.rollback()
+            existing_event = db_sess.query(Event).filter(Event.event_id == data["event_id"]).first()
+            if existing_event:
+                return jsonify({"status": "event already exists"}), 200
+            logger.error(f"Integrity violation storing event {data.get('event_id')}", exc_info=True)
+            return jsonify({
+                "error": "Database error",
+                "message": "Failed to store event in the database"
+            }), 500
         except Exception as e:
+            db_sess.rollback()
             logger.error(f"Database error storing event {data.get('event_id')}: {e}", exc_info=True)
             return jsonify({
                 "error": "Database error",
                 "message": "Failed to store event in the database"
             }), 500
+        finally:
+            db_sess.close()
 
-        return jsonify({"status": "event persisted"}), 201
 
     # --- READ-ONLY API ROUTES FOR FRONTEND & CLIENTS ---
 
@@ -927,37 +964,118 @@ def create_app(test_config=None):
         if len(scenario_name) > 64:
             return jsonify({"error": "scenario_name exceeds maximum allowed length of 64 characters"}), 400
 
+        nonlocal_run_scenario = run_scenario
+        if nonlocal_run_scenario is None:
+            from simulator.runner import run_scenario as nonlocal_run_scenario
+
         try:
-            nonlocal_run_scenario = run_scenario
-            if nonlocal_run_scenario is None:
-                from simulator.runner import run_scenario as nonlocal_run_scenario
-
             events = nonlocal_run_scenario(scenario_name)
+        except Exception as e:
+            logger.error(f"Failed to run scenario '{scenario_name}': {e}", exc_info=True)
+            return jsonify({"error": f"Failed to run scenario: {str(e)}"}), 400
 
-            # Persist and correlate
-            db_sess = get_session()
-            try:
+        exec_id = f"exec-{uuid.uuid4().hex}"
+        now_utc = datetime.now(timezone.utc)
+
+        # Track execution initiation in scenario_executions
+        db_sess = get_session()
+        try:
+            exec_record = ScenarioExecution(
+                id=exec_id,
+                scenario_name=scenario_name,
+                started_at=now_utc,
+                status="running",
+                event_count=0
+            )
+            db_sess.add(exec_record)
+            db_sess.commit()
+        except Exception as e:
+            logger.warning(f"Could not record ScenarioExecution start for {scenario_name}: {e}")
+            db_sess.rollback()
+        finally:
+            db_sess.close()
+
+        # Atomic scenario execution & correlation
+        db_sess = get_session()
+        try:
+            with correlator_transaction():
                 for evt in events:
-                    insert_event(evt)
-                    process_event(evt, db_sess)
+                    insert_event(evt, session=db_sess)
+                    try:
+                        process_event(evt, db_sess)
+                    except Exception as corr_err:
+                        logger.error(f"Correlation failed during scenario '{scenario_name}': {corr_err}", exc_info=True)
+                        raise corr_err
+                db_sess.commit()
+
+            # Record success in ScenarioExecution
+            try:
+                db_exec = db_sess.query(ScenarioExecution).filter(ScenarioExecution.id == exec_id).first()
+                if db_exec:
+                    db_exec.status = "success"
+                    db_exec.completed_at = datetime.now(timezone.utc)
+                    db_exec.event_count = len(events)
+                    db_sess.commit()
             except Exception as e:
-                db_sess.rollback()
-                logger.error(f"Correlation failed during scenario '{scenario_name}': {e}", exc_info=True)
-                return jsonify({
-                    "error": "Correlation error",
-                    "message": f"Failed to persist and correlate scenario event: {str(e)}"
-                }), 500
-            finally:
-                db_sess.close()
+                logger.warning(f"Failed to update ScenarioExecution status for {exec_id}: {e}")
 
             return jsonify({
                 "scenario": scenario_name,
+                "execution_id": exec_id,
                 "event_count": len(events),
                 "events": events
             }), 200
         except Exception as e:
-            logger.error(f"Failed to run scenario '{scenario_name}': {e}", exc_info=True)
-            return jsonify({"error": f"Failed to run scenario: {str(e)}"}), 400
+            db_sess.rollback()
+            # Update ScenarioExecution as failed
+            try:
+                fail_sess = get_session()
+                try:
+                    db_exec = fail_sess.query(ScenarioExecution).filter(ScenarioExecution.id == exec_id).first()
+                    if db_exec:
+                        db_exec.status = "failed"
+                        db_exec.completed_at = datetime.now(timezone.utc)
+                        db_exec.error_message = str(e)
+                        fail_sess.commit()
+                finally:
+                    fail_sess.close()
+            except Exception as err:
+                logger.warning(f"Failed to mark ScenarioExecution failed for {exec_id}: {err}")
+
+            logger.error(f"Correlation failed during scenario '{scenario_name}': {e}", exc_info=True)
+            return jsonify({
+                "error": "Correlation error",
+                "execution_id": exec_id,
+                "message": f"Failed to persist and correlate scenario event: {str(e)}"
+            }), 500
+        finally:
+            db_sess.close()
+
+    @app.route("/api/scenarios/executions", methods=["GET", "OPTIONS"])
+    @require_auth({"read", "ingest", "admin"})
+    def get_scenario_executions():
+        if request.method == "OPTIONS":
+            return jsonify({}), 200
+
+        limit, offset = get_pagination_params()
+        db = get_session()
+        try:
+            records = db.query(ScenarioExecution).order_by(ScenarioExecution.started_at.desc()).offset(offset).limit(limit).all()
+            result = []
+            for r in records:
+                result.append({
+                    "id": r.id,
+                    "scenario_name": r.scenario_name,
+                    "started_at": r.started_at.isoformat() if hasattr(r.started_at, "isoformat") else str(r.started_at),
+                    "completed_at": r.completed_at.isoformat() if r.completed_at and hasattr(r.completed_at, "isoformat") else (str(r.completed_at) if r.completed_at else None),
+                    "status": r.status,
+                    "event_count": r.event_count,
+                    "error_message": r.error_message
+                })
+            return jsonify(result), 200
+        finally:
+            db.close()
+
 
     # --- FRONTEND STATIC SERVING ---
 
