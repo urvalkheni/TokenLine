@@ -49,12 +49,17 @@ try:
         TokenFamilyMember,
         TokenReuseRecord,
         ScenarioExecution,
+        Alert,
     )
     from backend.correlator import (
         TokenFamilyCorrelator,
         process_event,
         reconstruct_chain,
         correlator_transaction,
+        get_alerts,
+        update_alert_status,
+        AlertStatus,
+        AlertSeverity,
     )
 except ImportError:
     from db import (
@@ -65,12 +70,17 @@ except ImportError:
         TokenFamilyMember,
         TokenReuseRecord,
         ScenarioExecution,
+        Alert,
     )
     from backend.correlator import (
         TokenFamilyCorrelator,
         process_event,
         reconstruct_chain,
         correlator_transaction,
+        get_alerts,
+        update_alert_status,
+        AlertStatus,
+        AlertSeverity,
     )
 
 
@@ -911,6 +921,122 @@ def create_app(test_config=None):
             return jsonify(result), 200
         except Exception as e:
             logger.error(f"Failed to fetch reuse records: {e}", exc_info=True)
+            return jsonify({"error": str(e)}), 500
+        finally:
+            db.close()
+
+    # --- STANDARDIZED ALERTS API ROUTES ---
+
+    @app.route("/api/alerts", methods=["GET", "OPTIONS"])
+    @require_auth({"read", "ingest", "admin"})
+    def get_alerts_endpoint():
+        if request.method == "OPTIONS":
+            return jsonify({}), 200
+
+        limit, offset = get_pagination_params()
+        rule_id = request.args.get("rule_id")
+        severity = request.args.get("severity")
+        status = request.args.get("status")
+        token_family_id = request.args.get("token_family_id") or request.args.get("token_family")
+        token_hash = request.args.get("token_hash")
+
+        db = get_session()
+        try:
+            query = db.query(Alert)
+            if rule_id:
+                query = query.filter(Alert.rule_id == rule_id)
+            if severity:
+                query = query.filter(Alert.severity == severity.lower())
+            if status:
+                query = query.filter(Alert.status == status.lower())
+            if token_family_id:
+                query = query.filter(Alert.token_family_id == token_family_id)
+            if token_hash:
+                query = query.filter(Alert.token_hash == token_hash)
+
+            records = query.order_by(Alert.timestamp.desc()).offset(offset).limit(limit).all()
+            result = [r.to_dict() for r in records]
+            return jsonify(result), 200
+        except Exception as e:
+            logger.error(f"Failed to fetch alerts: {e}", exc_info=True)
+            return jsonify({"error": str(e)}), 500
+        finally:
+            db.close()
+
+    @app.route("/api/alerts/<alert_id>", methods=["GET", "OPTIONS"])
+    @require_auth({"read", "ingest", "admin"})
+    def get_alert_detail(alert_id):
+        if request.method == "OPTIONS":
+            return jsonify({}), 200
+
+        if len(alert_id) > 128:
+            return jsonify({"error": "alert_id exceeds maximum allowed length"}), 400
+
+        db = get_session()
+        try:
+            alert = db.query(Alert).filter(Alert.id == alert_id).first()
+            if not alert:
+                return jsonify({"error": "Alert not found"}), 404
+            return jsonify(alert.to_dict()), 200
+        except Exception as e:
+            logger.error(f"Failed to fetch alert '{alert_id}': {e}", exc_info=True)
+            return jsonify({"error": str(e)}), 500
+        finally:
+            db.close()
+
+    @app.route("/api/alerts/<alert_id>", methods=["PATCH", "OPTIONS"])
+    @require_auth({"admin"})
+    def update_alert_endpoint(alert_id):
+        if request.method == "OPTIONS":
+            return jsonify({}), 200
+
+        if len(alert_id) > 128:
+            return jsonify({"error": "alert_id exceeds maximum allowed length"}), 400
+
+        if not request.is_json:
+            return jsonify({"error": "Content-Type must be application/json"}), 400
+
+        data = request.get_json() or {}
+        new_status = data.get("status")
+        if not new_status:
+            return jsonify({"error": "Missing 'status' field in request body"}), 400
+
+        new_status = str(new_status).strip().lower()
+        valid_statuses = {s.value for s in AlertStatus}
+        if new_status not in valid_statuses:
+            return jsonify({
+                "error": "Invalid status",
+                "message": f"Allowed statuses: {sorted(valid_statuses)}"
+            }), 400
+
+        db = get_session()
+        try:
+            alert = db.query(Alert).filter(Alert.id == alert_id).first()
+            if not alert:
+                return jsonify({"error": "Alert not found"}), 404
+
+            # Lifecycle transitions check: open -> acknowledged -> resolved
+            if alert.status == AlertStatus.RESOLVED.value and new_status != AlertStatus.RESOLVED.value:
+                return jsonify({
+                    "error": "Invalid state transition",
+                    "message": f"Cannot transition alert from terminal status '{alert.status}' to '{new_status}'"
+                }), 400
+
+            now_iso = datetime.now(timezone.utc).isoformat()
+            alert.status = new_status
+            alert.updated_at = now_iso
+            db.commit()
+
+            # Also update in-memory correlator if active
+            try:
+                update_alert_status(alert_id, new_status, db_session=None)
+            except Exception:
+                pass
+
+            return jsonify(alert.to_dict()), 200
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Failed to update alert '{alert_id}': {e}", exc_info=True)
             return jsonify({"error": str(e)}), 500
         finally:
             db.close()

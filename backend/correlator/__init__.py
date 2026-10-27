@@ -1,4 +1,22 @@
-from backend.correlator.models import TokenRecord, TokenReuseRecord, DetectionRecord, TokenStatus
+from backend.correlator.models import (
+    TokenRecord,
+    TokenReuseRecord,
+    DetectionRecord,
+    TokenStatus,
+    AlertRecord,
+    AlertStatus,
+    AlertSeverity,
+    RULE_TOKEN_REUSE,
+    RULE_REVOKED_USE,
+    RULE_EXPIRED_USE,
+    RULE_CONCURRENT_USE,
+    RULE_IMPOSSIBLE_TRAVEL,
+    RULE_TITLES,
+    RULE_SEVERITIES,
+    DETECTION_TYPE_TO_RULE,
+    RULE_TO_DETECTION_TYPE,
+    redact_secrets,
+)
 from backend.correlator.engine import (
     TokenFamilyCorrelator,
     process_event,
@@ -6,6 +24,17 @@ from backend.correlator.engine import (
     process_event_file,
     correlator_transaction,
     get_detection_records,
+    get_alerts,
+    update_alert_status,
+)
+
+from backend.correlator.evaluator import (
+    EvaluationMetrics,
+    IncidentEvaluationResult,
+    EvaluationReport,
+    calculate_metrics,
+    evaluate_incident,
+    evaluate_dataset,
 )
 
 __all__ = [
@@ -13,11 +42,33 @@ __all__ = [
     "TokenReuseRecord",
     "DetectionRecord",
     "TokenStatus",
+    "AlertRecord",
+    "AlertStatus",
+    "AlertSeverity",
+    "RULE_TOKEN_REUSE",
+    "RULE_REVOKED_USE",
+    "RULE_EXPIRED_USE",
+    "RULE_CONCURRENT_USE",
+    "RULE_IMPOSSIBLE_TRAVEL",
+    "RULE_TITLES",
+    "RULE_SEVERITIES",
+    "DETECTION_TYPE_TO_RULE",
+    "RULE_TO_DETECTION_TYPE",
+    "redact_secrets",
     "TokenFamilyCorrelator",
     "process_event",
     "reconstruct_chain",
     "process_event_file",
     "correlator_transaction",
     "get_detection_records",
+    "get_alerts",
+    "update_alert_status",
+    "EvaluationMetrics",
+    "IncidentEvaluationResult",
+    "EvaluationReport",
+    "calculate_metrics",
+    "evaluate_incident",
+    "evaluate_dataset",
 ]
+
 

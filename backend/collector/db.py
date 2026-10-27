@@ -1,4 +1,6 @@
 import os
+import json
+from typing import Dict, Any, List, Optional
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from sqlalchemy import create_engine, Column, String, Boolean, Integer, UniqueConstraint, Index
@@ -115,6 +117,61 @@ class ScenarioExecution(Base):
     status = Column(String, nullable=False)  # "running", "success", "failed"
     event_count = Column(Integer, default=0)
     error_message = Column(String, nullable=True)
+
+
+class Alert(Base):
+    __tablename__ = "alerts"
+    __table_args__ = (
+        UniqueConstraint("dedup_fingerprint", name="uq_alerts_dedup"),
+    )
+
+    id = Column(String, primary_key=True)
+    rule_id = Column(String, nullable=False, index=True)
+    severity = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="open", index=True)
+    timestamp = Column(TimezoneAwareDateTime, nullable=False, index=True)
+    title = Column(String, nullable=False)
+    explanation = Column(String, nullable=False)
+    event_refs_json = Column(String, nullable=False)  # JSON-encoded array of event_id strings
+    token_family_id = Column(String, nullable=True, index=True)
+    token_hash = Column(String, nullable=True, index=True)
+    user_id = Column(String, nullable=True, index=True)
+    evidence_json = Column(String, nullable=False)    # JSON-encoded dictionary of evidence
+    dedup_fingerprint = Column(String, nullable=False, unique=True, index=True)
+    created_at = Column(TimezoneAwareDateTime, nullable=False)
+    updated_at = Column(TimezoneAwareDateTime, nullable=False)
+
+    def to_dict(self) -> Dict[str, Any]:
+        event_refs = []
+        if self.event_refs_json:
+            try:
+                event_refs = json.loads(self.event_refs_json)
+            except Exception:
+                event_refs = []
+        evidence = {}
+        if self.evidence_json:
+            try:
+                evidence = json.loads(self.evidence_json)
+            except Exception:
+                evidence = {}
+
+        return {
+            "id": self.id,
+            "rule_id": self.rule_id,
+            "severity": self.severity,
+            "status": self.status,
+            "timestamp": self.timestamp,
+            "title": self.title,
+            "explanation": self.explanation,
+            "event_refs": event_refs,
+            "token_family_id": self.token_family_id,
+            "token_hash": self.token_hash,
+            "user_id": self.user_id,
+            "evidence": evidence,
+            "dedup_fingerprint": self.dedup_fingerprint,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
 
 
 _engine = None
