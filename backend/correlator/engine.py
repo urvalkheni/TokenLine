@@ -1,12 +1,31 @@
 import uuid
 import os
+import json
 import logging
 import threading
 import copy
 from datetime import datetime, timezone
 from contextlib import contextmanager
 from typing import Dict, List, Optional, Any, Set, Tuple
-from backend.correlator.models import TokenRecord, TokenReuseRecord, DetectionRecord, TokenStatus
+from backend.correlator.models import (
+    TokenRecord,
+    TokenReuseRecord,
+    DetectionRecord,
+    TokenStatus,
+    AlertRecord,
+    AlertStatus,
+    AlertSeverity,
+    RULE_TOKEN_REUSE,
+    RULE_REVOKED_USE,
+    RULE_EXPIRED_USE,
+    RULE_CONCURRENT_USE,
+    RULE_IMPOSSIBLE_TRAVEL,
+    RULE_TITLES,
+    RULE_SEVERITIES,
+    DETECTION_TYPE_TO_RULE,
+    RULE_TO_DETECTION_TYPE,
+    redact_secrets,
+)
 
 logger = logging.getLogger("tokenline.correlator.engine")
 
@@ -78,6 +97,10 @@ class TokenFamilyCorrelator:
         self.detection_records: List[DetectionRecord] = []
         # Deduplication set of (detection_type, token_hash, attempted_event_id)
         self._detections_seen: Set[Tuple[str, str, str]] = set()
+        # Standardized alert instances (AlertRecord)
+        self.alerts: List[AlertRecord] = []
+        # Deduplication set of alert fingerprints: "rule_id:token_hash:event_id"
+        self._alerts_seen: Set[str] = set()
         # Token usage history: token_hash -> List[Dict[str, Any]]
         self._token_usages: Dict[str, List[Dict[str, Any]]] = {}
         # User usage history: user_id -> List[Dict[str, Any]]
@@ -92,6 +115,8 @@ class TokenFamilyCorrelator:
             self._reuse_seen.clear()
             self.detection_records.clear()
             self._detections_seen.clear()
+            self.alerts.clear()
+            self._alerts_seen.clear()
             self._token_usages.clear()
             self._user_usages.clear()
 
@@ -104,6 +129,8 @@ class TokenFamilyCorrelator:
             "_reuse_seen": copy.copy(self._reuse_seen),
             "detection_records": copy.deepcopy(self.detection_records),
             "_detections_seen": copy.copy(self._detections_seen),
+            "alerts": copy.deepcopy(self.alerts),
+            "_alerts_seen": copy.copy(self._alerts_seen),
             "_token_usages": copy.deepcopy(self._token_usages),
             "_user_usages": copy.deepcopy(self._user_usages),
         }
@@ -116,8 +143,77 @@ class TokenFamilyCorrelator:
         self._reuse_seen = snap["_reuse_seen"]
         self.detection_records = snap.get("detection_records", [])
         self._detections_seen = snap.get("_detections_seen", set())
+        self.alerts = snap.get("alerts", [])
+        self._alerts_seen = snap.get("_alerts_seen", set())
         self._token_usages = snap.get("_token_usages", {})
         self._user_usages = snap.get("_user_usages", {})
+
+    def _record_alert(
+        self,
+        rule_id: str,
+        token_family_id: str,
+        event_refs: List[str],
+        timestamp: str,
+        severity: Optional[str] = None,
+        title: Optional[str] = None,
+        explanation: Optional[str] = None,
+        evidence: Optional[Dict[str, Any]] = None,
+        token_hash: Optional[str] = None,
+        user_id: Optional[str] = None,
+        status: str = AlertStatus.OPEN.value,
+    ) -> AlertRecord:
+        """
+        Records an evidence-based AlertRecord idempotently.
+        Deduplicates in-memory by dedup_fingerprint and keeps detection_records in sync for compatibility.
+        """
+        ref = event_refs[0] if event_refs else "noref"
+        th = token_hash or "nohash"
+        fingerprint = f"{rule_id}:{th}:{ref}"
+
+        if fingerprint in self._alerts_seen:
+            for a in self.alerts:
+                if a.dedup_fingerprint == fingerprint:
+                    return a
+
+        alert = AlertRecord(
+            id=f"alert-{uuid.uuid4().hex[:12]}",
+            rule_id=rule_id,
+            severity=severity or RULE_SEVERITIES.get(rule_id, AlertSeverity.HIGH.value),
+            timestamp=timestamp,
+            status=status,
+            event_refs=list(event_refs),
+            token_family_id=token_family_id,
+            token_hash=token_hash,
+            user_id=user_id,
+            title=title or RULE_TITLES.get(rule_id, f"Security Alert: {rule_id}"),
+            explanation=explanation or "",
+            evidence=evidence or {},
+            dedup_fingerprint=fingerprint,
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        self.alerts.append(alert)
+        self._alerts_seen.add(fingerprint)
+
+        # Synchronize into detection_records for backward compatibility
+        det_type = RULE_TO_DETECTION_TYPE.get(rule_id, rule_id)
+        det_key = (det_type, token_hash or "", ref)
+        if det_key not in self._detections_seen:
+            det = DetectionRecord(
+                detection_type=det_type,
+                token_hash=token_hash or "",
+                token_family=token_family_id,
+                detected_at=timestamp,
+                attempted_event_id=ref,
+                severity=alert.severity,
+                user_id=user_id,
+                chain_context=evidence.get("chain_context", []) if evidence else [],
+                metadata=alert.evidence,
+            )
+            self.detection_records.append(det)
+            self._detections_seen.add(det_key)
+
+        return alert
 
     def _record_detection(
         self,
@@ -132,18 +228,44 @@ class TokenFamilyCorrelator:
         chain_context: Optional[List[str]] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> DetectionRecord:
-        """Records a detection record idempotently, preventing duplicate alerts for identical evidence."""
-        key = (detection_type, token_hash, attempted_event_id)
-        if key in self._detections_seen:
-            for d in self.detection_records:
-                if (
-                    d.detection_type == detection_type
-                    and d.token_hash == token_hash
-                    and d.attempted_event_id == attempted_event_id
-                ):
-                    return d
+        """Records a detection record idempotently, delegating to standardized AlertRecord."""
+        rule_id = DETECTION_TYPE_TO_RULE.get(detection_type, detection_type)
+        ev = dict(metadata or {})
+        if parent_token_hash:
+            ev["parent_token_hash"] = parent_token_hash
+        if chain_context:
+            ev["chain_context"] = chain_context
 
-        rec = DetectionRecord(
+        explanation = ""
+        if rule_id == RULE_TOKEN_REUSE:
+            explanation = f"Refresh token {token_hash[:8]}... was presented after prior rotation in family {token_family}."
+        elif rule_id == RULE_REVOKED_USE:
+            explanation = f"Revoked token {token_hash[:8]}... was presented for authentication in family {token_family}."
+        elif rule_id == RULE_EXPIRED_USE:
+            explanation = f"Expired token {token_hash[:8]}... was presented for authentication in family {token_family}."
+        elif rule_id == RULE_CONCURRENT_USE:
+            explanation = f"Token {token_hash[:8]}... was used concurrently from different client contexts within 60s."
+        elif rule_id == RULE_IMPOSSIBLE_TRAVEL:
+            explanation = f"Geographically impossible travel observed for user {user_id} within 300s."
+
+        self._record_alert(
+            rule_id=rule_id,
+            token_family_id=token_family,
+            event_refs=[attempted_event_id],
+            timestamp=detected_at,
+            severity=severity,
+            title=RULE_TITLES.get(rule_id),
+            explanation=explanation,
+            evidence=ev,
+            token_hash=token_hash,
+            user_id=user_id,
+        )
+
+        for d in self.detection_records:
+            if d.detection_type == detection_type and d.token_hash == token_hash and d.attempted_event_id == attempted_event_id:
+                return d
+
+        return DetectionRecord(
             detection_type=detection_type,
             token_hash=token_hash,
             token_family=token_family,
@@ -155,9 +277,6 @@ class TokenFamilyCorrelator:
             chain_context=chain_context or [],
             metadata=metadata or {},
         )
-        self.detection_records.append(rec)
-        self._detections_seen.add(key)
-        return rec
 
     def get_detection_records(
         self,
@@ -175,6 +294,134 @@ class TokenFamilyCorrelator:
             if token_hash:
                 results = [r for r in results if r.token_hash == token_hash]
             return results
+
+    def get_alerts(
+        self,
+        rule_id: Optional[str] = None,
+        severity: Optional[str] = None,
+        status: Optional[str] = None,
+        token_family_id: Optional[str] = None,
+        token_hash: Optional[str] = None,
+        db_session: Optional[Any] = None,
+    ) -> List[AlertRecord]:
+        """
+        Returns recorded standardized alerts, optionally filtered.
+        Retrieves from database when db_session is provided, otherwise from in-memory store.
+        """
+        if db_session is not None:
+            from backend.collector.db import Alert as DBAlert
+            query = db_session.query(DBAlert)
+            if rule_id:
+                query = query.filter(DBAlert.rule_id == rule_id)
+            if severity:
+                query = query.filter(DBAlert.severity == severity)
+            if status:
+                query = query.filter(DBAlert.status == status)
+            if token_family_id:
+                query = query.filter(DBAlert.token_family_id == token_family_id)
+            if token_hash:
+                query = query.filter(DBAlert.token_hash == token_hash)
+            db_rows = query.order_by(DBAlert.timestamp.asc()).all()
+            return [
+                AlertRecord(
+                    id=row.id,
+                    rule_id=row.rule_id,
+                    severity=row.severity,
+                    timestamp=row.timestamp,
+                    status=row.status,
+                    event_refs=json.loads(row.event_refs_json or "[]"),
+                    token_family_id=row.token_family_id,
+                    token_hash=row.token_hash,
+                    user_id=row.user_id,
+                    title=row.title,
+                    explanation=row.explanation or "",
+                    evidence=json.loads(row.evidence_json or "{}"),
+                    dedup_fingerprint=row.dedup_fingerprint,
+                    created_at=row.created_at,
+                    updated_at=row.updated_at,
+                )
+                for row in db_rows
+            ]
+
+        with self._lock:
+            results = list(self.alerts)
+            if rule_id:
+                results = [r for r in results if r.rule_id == rule_id]
+            if severity:
+                results = [r for r in results if r.severity == severity]
+            if status:
+                results = [r for r in results if r.status == status]
+            if token_family_id:
+                results = [r for r in results if r.token_family_id == token_family_id]
+            if token_hash:
+                results = [r for r in results if r.token_hash == token_hash]
+            return results
+
+    def update_alert_status(
+        self,
+        alert_id: str,
+        new_status: str,
+        db_session: Optional[Any] = None,
+        commit: bool = True,
+    ) -> Optional[AlertRecord]:
+        """
+        Updates the lifecycle status of an alert with validation:
+        open -> acknowledged -> resolved.
+        Rejects invalid transitions or invalid status names.
+        """
+        valid_statuses = {s.value for s in AlertStatus}
+        if new_status not in valid_statuses:
+            raise ValueError(f"Invalid alert status: '{new_status}'. Allowed statuses: {sorted(valid_statuses)}")
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        updated_alert: Optional[AlertRecord] = None
+
+        with self._lock:
+            # Check in-memory alert
+            for a in self.alerts:
+                if a.id == alert_id:
+                    if a.status == new_status:
+                        return a
+                    if a.status == AlertStatus.RESOLVED.value and new_status != AlertStatus.RESOLVED.value:
+                        raise ValueError(f"Cannot transition alert from terminal status '{a.status}' to '{new_status}'")
+                    a.status = new_status
+                    a.updated_at = now_iso
+                    updated_alert = a
+                    break
+
+        if db_session is not None:
+            from backend.collector.db import Alert as DBAlert
+            db_alert = db_session.query(DBAlert).filter(DBAlert.id == alert_id).first()
+            if db_alert:
+                if db_alert.status == AlertStatus.RESOLVED.value and new_status != AlertStatus.RESOLVED.value:
+                    raise ValueError(f"Cannot transition alert from terminal status '{db_alert.status}' to '{new_status}'")
+                db_alert.status = new_status
+                db_alert.updated_at = now_iso
+                if commit:
+                    db_session.commit()
+                else:
+                    db_session.flush()
+
+                if not updated_alert:
+                    updated_alert = AlertRecord(
+                        id=db_alert.id,
+                        rule_id=db_alert.rule_id,
+                        severity=db_alert.severity,
+                        timestamp=db_alert.timestamp,
+                        status=db_alert.status,
+                        event_refs=json.loads(db_alert.event_refs_json or "[]"),
+                        token_family_id=db_alert.token_family_id,
+                        token_hash=db_alert.token_hash,
+                        user_id=db_alert.user_id,
+                        title=db_alert.title,
+                        explanation=db_alert.explanation or "",
+                        evidence=json.loads(db_alert.evidence_json or "{}"),
+                        dedup_fingerprint=db_alert.dedup_fingerprint,
+                        created_at=db_alert.created_at,
+                        updated_at=db_alert.updated_at,
+                    )
+
+        return updated_alert
 
     @contextmanager
     def transaction(self):
@@ -700,7 +947,8 @@ class TokenFamilyCorrelator:
         if db_session is not None:
             self._sync_db(event_data, db_session, detected_reuse, commit=commit)
 
-        return detected_reuse or detected_violation
+        matching_alerts = [a for a in self.alerts if event_id in a.event_refs]
+        return detected_reuse or (matching_alerts[0] if matching_alerts else None) or detected_violation
 
     def _register_token(self, token: TokenRecord):
         self.tokens[token.token_hash] = token
@@ -899,6 +1147,58 @@ class TokenFamilyCorrelator:
                         # Concurrently inserted in another transaction
                         pass
 
+            # 2. Store standardized alerts if detected
+            from backend.collector.db import Alert as DBAlert
+            event_alerts = [a for a in self.alerts if event_id in a.event_refs]
+            for alert in event_alerts:
+                existing_alert = db_session.query(DBAlert).filter(
+                    DBAlert.dedup_fingerprint == alert.dedup_fingerprint
+                ).first()
+                if not existing_alert:
+                    try:
+                        if hasattr(db_session, "begin_nested"):
+                            with db_session.begin_nested():
+                                db_alert = DBAlert(
+                                    id=alert.id,
+                                    rule_id=alert.rule_id,
+                                    severity=alert.severity,
+                                    status=alert.status,
+                                    timestamp=alert.timestamp,
+                                    title=alert.title,
+                                    explanation=alert.explanation,
+                                    event_refs_json=json.dumps(alert.event_refs),
+                                    token_family_id=alert.token_family_id,
+                                    token_hash=alert.token_hash,
+                                    user_id=alert.user_id,
+                                    evidence_json=json.dumps(alert.evidence),
+                                    dedup_fingerprint=alert.dedup_fingerprint,
+                                    created_at=alert.created_at,
+                                    updated_at=alert.updated_at,
+                                )
+                                db_session.add(db_alert)
+                                db_session.flush()
+                        else:
+                            db_alert = DBAlert(
+                                id=alert.id,
+                                rule_id=alert.rule_id,
+                                severity=alert.severity,
+                                status=alert.status,
+                                timestamp=alert.timestamp,
+                                title=alert.title,
+                                explanation=alert.explanation,
+                                event_refs_json=json.dumps(alert.event_refs),
+                                token_family_id=alert.token_family_id,
+                                token_hash=alert.token_hash,
+                                user_id=alert.user_id,
+                                evidence_json=json.dumps(alert.evidence),
+                                dedup_fingerprint=alert.dedup_fingerprint,
+                                created_at=alert.created_at,
+                                updated_at=alert.updated_at,
+                            )
+                            db_session.add(db_alert)
+                    except IntegrityError:
+                        pass
+
             # 2. Sync token lifecycle records
             if event_type == "token_refreshed" and parent_token_hash:
                 parent = db_session.query(TokenFamilyMember).filter(TokenFamilyMember.token_hash == parent_token_hash).first()
@@ -1020,7 +1320,7 @@ class TokenFamilyCorrelator:
                 else:
                     db_session.flush()
 
-            elif detected_reuse:
+            elif detected_reuse or event_alerts:
                 if commit:
                     db_session.commit()
                 else:
@@ -1052,7 +1352,7 @@ def process_event(
     db_session: Optional[Any] = None,
     correlator: Optional[TokenFamilyCorrelator] = None,
     commit: Optional[bool] = None
-) -> Optional[TokenReuseRecord]:
+) -> Optional[Any]:
     """Module-level helper delegating to the production TokenFamilyCorrelator."""
     c = correlator or _default_correlator
     return c.process_event(event_data, db_session=db_session, commit=commit)
@@ -1077,6 +1377,39 @@ def get_detection_records(
     """Module-level helper delegating to the production TokenFamilyCorrelator."""
     c = correlator or _default_correlator
     return c.get_detection_records(detection_type=detection_type, token_family=token_family, token_hash=token_hash)
+
+
+def get_alerts(
+    rule_id: Optional[str] = None,
+    severity: Optional[str] = None,
+    status: Optional[str] = None,
+    token_family_id: Optional[str] = None,
+    token_hash: Optional[str] = None,
+    db_session: Optional[Any] = None,
+    correlator: Optional[TokenFamilyCorrelator] = None,
+) -> List[AlertRecord]:
+    """Module-level helper delegating to the production TokenFamilyCorrelator."""
+    c = correlator or _default_correlator
+    return c.get_alerts(
+        rule_id=rule_id,
+        severity=severity,
+        status=status,
+        token_family_id=token_family_id,
+        token_hash=token_hash,
+        db_session=db_session,
+    )
+
+
+def update_alert_status(
+    alert_id: str,
+    new_status: str,
+    db_session: Optional[Any] = None,
+    commit: bool = True,
+    correlator: Optional[TokenFamilyCorrelator] = None,
+) -> Optional[AlertRecord]:
+    """Module-level helper delegating to the production TokenFamilyCorrelator."""
+    c = correlator or _default_correlator
+    return c.update_alert_status(alert_id=alert_id, new_status=new_status, db_session=db_session, commit=commit)
 
 
 def process_event_file(

@@ -232,12 +232,56 @@ def downgrade_005(conn, engine):
     conn.execute(text("DROP TABLE IF EXISTS scenario_executions"))
 
 
+def upgrade_006(conn, engine):
+    """Create alerts table with deduplication constraint and indexes."""
+    conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS alerts (
+            id VARCHAR PRIMARY KEY,
+            rule_id VARCHAR NOT NULL,
+            severity VARCHAR NOT NULL,
+            status VARCHAR NOT NULL DEFAULT 'open',
+            timestamp VARCHAR NOT NULL,
+            title VARCHAR NOT NULL,
+            explanation VARCHAR NOT NULL,
+            event_refs_json VARCHAR NOT NULL,
+            token_family_id VARCHAR,
+            token_hash VARCHAR,
+            user_id VARCHAR,
+            evidence_json VARCHAR NOT NULL,
+            dedup_fingerprint VARCHAR NOT NULL,
+            created_at VARCHAR NOT NULL,
+            updated_at VARCHAR NOT NULL
+        )
+    """))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_alerts_rule_id ON alerts (rule_id)"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_alerts_severity ON alerts (severity)"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_alerts_status ON alerts (status)"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_alerts_timestamp ON alerts (timestamp)"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_alerts_token_family_id ON alerts (token_family_id)"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_alerts_token_hash ON alerts (token_hash)"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_alerts_user_id ON alerts (user_id)"))
+    conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_alerts_dedup ON alerts (dedup_fingerprint)"))
+
+
+def downgrade_006(conn, engine):
+    conn.execute(text("DROP INDEX IF EXISTS uq_alerts_dedup"))
+    conn.execute(text("DROP INDEX IF EXISTS ix_alerts_user_id"))
+    conn.execute(text("DROP INDEX IF EXISTS ix_alerts_token_hash"))
+    conn.execute(text("DROP INDEX IF EXISTS ix_alerts_token_family_id"))
+    conn.execute(text("DROP INDEX IF EXISTS ix_alerts_timestamp"))
+    conn.execute(text("DROP INDEX IF EXISTS ix_alerts_status"))
+    conn.execute(text("DROP INDEX IF EXISTS ix_alerts_severity"))
+    conn.execute(text("DROP INDEX IF EXISTS ix_alerts_rule_id"))
+    conn.execute(text("DROP TABLE IF EXISTS alerts"))
+
+
 MIGRATIONS = {
     "001_initial_schema": (upgrade_001, downgrade_001),
     "002_add_indexes_and_constraints": (upgrade_002, downgrade_002),
     "003_convert_timestamps_to_timezone_aware": (upgrade_003, downgrade_003),
     "004_canonical_schema_fields": (upgrade_004, downgrade_004),
     "005_scenario_executions": (upgrade_005, downgrade_005),
+    "006_alerts_table": (upgrade_006, downgrade_006),
 }
 
 
