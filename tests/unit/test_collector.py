@@ -245,7 +245,8 @@ def test_correlation_failure_is_logged_and_not_silent_success(client, monkeypatc
     assert response.status_code == 500
     res_data = response.get_json()
     assert res_data.get("error") == "Correlation error"
-    assert "Correlation failed" in res_data.get("message", "")
+    assert res_data.get("code") == "correlation_error"
+    assert res_data.get("message") == "Event correlation could not be completed."
     assert "event correlation failed" in caplog.text
     assert "evt-correlate-fail" not in caplog.text
     assert "Simulated engine failure during correlation" not in caplog.text

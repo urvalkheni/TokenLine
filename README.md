@@ -244,6 +244,37 @@ Authentication tokens can be provided in either of the following HTTP request he
 - `Authorization: Bearer <your_api_key>`
 - `X-API-Key: <your_api_key>`
 
+### Event Investigation Queries
+
+`GET /api/events` (also available as `GET /events`) accepts these optional query parameters. The endpoint requires a `read`, `ingest`, or `admin` API key.
+
+| Parameter | Behavior |
+| :--- | :--- |
+| `event_type` | Match one event type from the canonical event schema. |
+| `token_hash` | Match one validated token hash; raw tokens are not accepted. |
+| `token_family` | Match one token family identifier (1–128 printable characters). |
+| `start_time`, `end_time` | Inclusive event time bounds in ISO 8601 format with a timezone, such as `2026-08-16T10:00:00Z`. |
+| `limit`, `offset` | Pagination; `limit` is 1–100 (default 100), and `offset` is 0–1,000,000 (default 0). |
+
+Filters can be combined. Invalid, duplicate, or out-of-range parameters return HTTP 400 in a consistent JSON shape with `error`, `code`, and `message` fields. Internal failures return a generic message; exception details are retained only in privacy-safe server diagnostics.
+
+Example:
+
+```http
+GET /api/events?event_type=token_issued&token_family=family-123&start_time=2026-08-16T10:00:00Z&limit=25
+Authorization: Bearer <your_api_key>
+```
+
+Example validation response:
+
+```json
+{
+  "error": "Invalid request",
+  "code": "invalid_event_type",
+  "message": "event_type is not supported"
+}
+```
+
 ### Development vs Production Safety Rules
 
 - **Development & Test Modes (`TOKENLINE_ENV=development` or `test`)**:

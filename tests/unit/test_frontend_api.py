@@ -115,7 +115,7 @@ def test_frontend_static_serving(client):
     assert b"TokenLine" in res.data
 
 
-def test_pagination_negative_and_upper_bound_limits(client):
+def test_pagination_rejects_negative_and_out_of_range_limits(client):
     # Ingest 3 events
     for i in range(3):
         client.post("/events", json={
@@ -130,25 +130,19 @@ def test_pagination_negative_and_upper_bound_limits(client):
             "result": "accepted"
         })
 
-    # Test limit=-1 (safe handling: must not disable pagination or cause unbounded query)
+    # Invalid bounds are rejected with a consistent client error.
     res_neg = client.get("/api/events?limit=-1")
-    assert res_neg.status_code == 200
-    events_neg = res_neg.get_json()
-    assert len(events_neg) <= 100
+    assert res_neg.status_code == 400
+    assert res_neg.get_json()["code"] == "invalid_pagination"
 
     res_neg_events = client.get("/events?limit=-1")
-    assert res_neg_events.status_code == 200
-    assert len(res_neg_events.get_json()) <= 100
+    assert res_neg_events.status_code == 400
 
-    # Test limit=999999999 (hard upper bound of 100)
     res_large = client.get("/api/events?limit=999999999")
-    assert res_large.status_code == 200
-    events_large = res_large.get_json()
-    assert len(events_large) <= 100
+    assert res_large.status_code == 400
 
     res_large_events = client.get("/events?limit=999999999")
-    assert res_large_events.status_code == 200
-    assert len(res_large_events.get_json()) <= 100
+    assert res_large_events.status_code == 400
 
 
 def test_pagination_across_all_collection_endpoints(client):
@@ -165,26 +159,82 @@ def test_pagination_across_all_collection_endpoints(client):
     assert len(scenarios_p2) == 2
     assert scenarios_p1[0]["id"] != scenarios_p2[0]["id"]
 
-    # /api/scenarios with limit=-1 and limit=999999999
+    # Invalid bounds are rejected consistently across paginated collections.
     res_scenarios_neg = client.get("/api/scenarios?limit=-1")
-    assert res_scenarios_neg.status_code == 200
-    assert len(res_scenarios_neg.get_json()) <= 100
+    assert res_scenarios_neg.status_code == 400
 
     res_scenarios_bound = client.get("/api/scenarios?limit=999999999")
-    assert res_scenarios_bound.status_code == 200
-    assert len(res_scenarios_bound.get_json()) <= 100
+    assert res_scenarios_bound.status_code == 400
 
     # /api/families with limit=-1 and limit=999999999
     res_fam_neg = client.get("/api/families?limit=-1")
-    assert res_fam_neg.status_code == 200
+    assert res_fam_neg.status_code == 400
     res_fam_bound = client.get("/api/families?limit=999999999")
-    assert res_fam_bound.status_code == 200
+    assert res_fam_bound.status_code == 400
 
     # /api/reuse-records with limit=-1 and limit=999999999
     res_reuse_neg = client.get("/api/reuse-records?limit=-1")
-    assert res_reuse_neg.status_code == 200
+    assert res_reuse_neg.status_code == 400
     res_reuse_bound = client.get("/api/reuse-records?limit=999999999")
-    assert res_reuse_bound.status_code == 200
+    assert res_reuse_bound.status_code == 400
+
+
+def test_event_investigation_filters(client):
+    events = [
+        {"event_id": "evt-filter-1", "event_type": "token_issued", "time": "2026-08-16T10:00:00Z", "user_id": "filter-user", "token_hash": "a4d3b8f1c299", "token_family": "filter-family", "ip_hash": "f3b29c9e8d19", "device_id": "filter-device", "result": "accepted"},
+        {"event_id": "evt-filter-2", "event_type": "token_refreshed", "time": "2026-08-16T11:00:00Z", "user_id": "filter-user", "token_hash": "a4d3b8f1c298", "token_family": "filter-family", "ip_hash": "f3b29c9e8d18", "device_id": "filter-device", "result": "accepted"},
+        {"event_id": "evt-filter-3", "event_type": "token_issued", "time": "2026-08-16T12:00:00Z", "user_id": "filter-user", "token_hash": "a4d3b8f1c297", "token_family": "other-family", "ip_hash": "f3b29c9e8d17", "device_id": "filter-device", "result": "accepted"},
+    ]
+    for event in events:
+        assert client.post("/events", json=event).status_code == 201
+
+    response = client.get(
+        "/api/events?event_type=token_issued&token_hash=a4d3b8f1c299&token_family=filter-family&start_time=2026-08-16T10:00:00Z&end_time=2026-08-16T10:30:00Z"
+    )
+    assert response.status_code == 200
+    assert [event["event_id"] for event in response.get_json()] == ["evt-filter-1"]
+
+
+@pytest.mark.parametrize("query", [
+    "event_type=not_a_type",
+    "token_hash=not-a-hash",
+    "token_family=",
+    "start_time=2026-08-16T10:00:00",
+    "start_time=2026-08-16T12:00:00Z&end_time=2026-08-16T10:00:00Z",
+    "limit=abc",
+    "offset=-1",
+    "event_type=token_issued&event_type=logout",
+])
+def test_invalid_event_filters_and_pagination_have_standard_errors(client, query):
+    response = client.get(f"/api/events?{query}")
+    assert response.status_code == 400
+    body = response.get_json()
+    assert body["error"]
+    assert body["code"]
+    assert body["message"]
+
+
+def test_event_filters_remain_authorized(client):
+    response = client.get("/api/events?event_type=not_a_type", headers={"Authorization": ""})
+    assert response.status_code == 401
+    assert response.get_json()["code"] == "unauthorized"
+
+
+def test_event_query_failure_does_not_disclose_exception(client, monkeypatch):
+    from importlib import import_module
+    collector_app = import_module("backend.collector.app")
+
+    def fail_session_creation():
+        raise RuntimeError("database password must not be disclosed")
+
+    monkeypatch.setattr(collector_app, "get_session", fail_session_creation)
+    response = client.get("/api/events")
+    assert response.status_code == 500
+    assert response.get_json() == {
+        "error": "Internal server error",
+        "code": "internal_error",
+        "message": "The request could not be completed.",
+    }
 
 
 def test_path_parameter_maximum_lengths(client):
