@@ -3,10 +3,12 @@ import sys
 from functools import wraps
 from flask import Flask, request, jsonify, send_from_directory, current_app, has_app_context
 from werkzeug.exceptions import RequestEntityTooLarge
+from sqlalchemy import inspect
 import json
 import os
 import re
 import logging
+import json as json_module
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -45,6 +47,8 @@ try:
         init_db,
         insert_event,
         get_session,
+        get_engine,
+        delete_expired_events,
         Event,
         TokenFamilyMember,
         TokenReuseRecord,
@@ -66,6 +70,8 @@ except ImportError:
         init_db,
         insert_event,
         get_session,
+        get_engine,
+        delete_expired_events,
         Event,
         TokenFamilyMember,
         TokenReuseRecord,
@@ -93,6 +99,26 @@ except ImportError:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("tokenline.collector")
 
+
+class OperationalJsonFormatter(logging.Formatter):
+    """Emit compact JSON records without serializing request data or exception text."""
+    def format(self, record):
+        entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        for field in ("operation", "error_type", "status_code"):
+            value = getattr(record, field, None)
+            if value is not None:
+                entry[field] = value
+        return json_module.dumps(entry, separators=(",", ":"))
+
+
+for _handler in logging.getLogger().handlers:
+    _handler.setFormatter(OperationalJsonFormatter())
+
 FRONTEND_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "frontend")
 
 # Load schema
@@ -101,7 +127,7 @@ try:
     with open(SCHEMA_PATH, "r") as f:
         event_schema = json.load(f)
 except Exception as e:
-    logger.error(f"Error loading event schema from {SCHEMA_PATH}: {e}")
+    logger.error("event schema could not be loaded", extra={"operation": "schema_load", "error_type": type(e).__name__})
     event_schema = None
 
 # ==============================================================================
@@ -638,6 +664,14 @@ def create_app(test_config=None):
     if test_config:
         app.config.update(test_config)
 
+    retention_value = app.config.get("EVENT_RETENTION_DAYS", os.environ.get("EVENT_RETENTION_DAYS", "365"))
+    try:
+        app.config["EVENT_RETENTION_DAYS"] = int(retention_value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("EVENT_RETENTION_DAYS must be a positive integer") from exc
+    if app.config["EVENT_RETENTION_DAYS"] < 1:
+        raise ValueError("EVENT_RETENTION_DAYS must be a positive integer")
+
     mode = get_environment_mode(app.config)
     api_keys = validate_and_load_api_keys(mode, app.config)
     allowed_origins = validate_and_load_cors_origins(mode, app.config)
@@ -649,6 +683,40 @@ def create_app(test_config=None):
     # Maximum request body size: 10 MB (10 * 1024 * 1024 bytes)
     MAX_CONTENT_LENGTH = 10 * 1024 * 1024
     app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH
+
+    @app.route("/health", methods=["GET"])
+    def health_check():
+        """Process liveness check; does not depend on external services."""
+        return jsonify({"status": "healthy"}), 200
+
+    @app.route("/ready", methods=["GET"])
+    @app.route("/readiness", methods=["GET"])
+    def readiness_check():
+        """Readiness check verifies both database connectivity and initialized schema."""
+        try:
+            if not event_schema:
+                raise RuntimeError("event schema is not loaded")
+            engine = get_engine()
+            with engine.connect() as connection:
+                connection.exec_driver_sql("SELECT 1")
+            if not inspect(engine).has_table("events"):
+                raise RuntimeError("event table is not initialized")
+            return jsonify({"status": "ready"}), 200
+        except Exception as exc:
+            logger.warning(
+                "collector is not ready",
+                extra={"operation": "readiness_check", "error_type": type(exc).__name__},
+            )
+            return jsonify({"status": "not_ready"}), 503
+
+    @app.after_request
+    def log_operational_request(response):
+        # Never log request paths, query strings, headers, or payloads; paths may contain IDs.
+        logger.info(
+            "request completed",
+            extra={"operation": "http_request", "status_code": response.status_code},
+        )
+        return response
 
     @app.before_request
     def check_request_size():
@@ -728,7 +796,7 @@ def create_app(test_config=None):
                     try:
                         process_event(data, db_sess)
                     except Exception as corr_err:
-                        logger.error(f"Correlation failed for event {data.get('event_id')}: {corr_err}", exc_info=True)
+                        logger.error("event correlation failed", extra={"operation": "event_correlation", "error_type": type(corr_err).__name__})
                         raise corr_err
                     db_sess.commit()
             except IntegrityError:
@@ -746,14 +814,14 @@ def create_app(test_config=None):
             existing_event = db_sess.query(Event).filter(Event.event_id == data["event_id"]).first()
             if existing_event:
                 return jsonify({"status": "event already exists"}), 200
-            logger.error(f"Integrity violation storing event {data.get('event_id')}", exc_info=True)
+            logger.error("event storage integrity check failed", extra={"operation": "event_storage", "error_type": "IntegrityError"})
             return jsonify({
                 "error": "Database error",
                 "message": "Failed to store event in the database"
             }), 500
         except Exception as e:
             db_sess.rollback()
-            logger.error(f"Database error storing event {data.get('event_id')}: {e}", exc_info=True)
+            logger.error("event storage failed", extra={"operation": "event_storage", "error_type": type(e).__name__})
             return jsonify({
                 "error": "Database error",
                 "message": "Failed to store event in the database"
@@ -797,7 +865,7 @@ def create_app(test_config=None):
                 })
             return jsonify(result), 200
         except Exception as e:
-            logger.error(f"Failed to fetch events: {e}", exc_info=True)
+            logger.error("event query failed", extra={"operation": "event_query", "error_type": type(e).__name__})
             return jsonify({"error": str(e)}), 500
         finally:
             db.close()
@@ -843,7 +911,7 @@ def create_app(test_config=None):
 
             return jsonify(families_dict), 200
         except Exception as e:
-            logger.error(f"Failed to fetch token families: {e}", exc_info=True)
+            logger.error("token family query failed", extra={"operation": "family_query", "error_type": type(e).__name__})
             return jsonify({"error": str(e)}), 500
         finally:
             db.close()
@@ -894,7 +962,7 @@ def create_app(test_config=None):
                 "reuse_count": len(reuse_records)
             }), 200
         except Exception as e:
-            logger.error(f"Failed to fetch family detail '{family_id}': {e}", exc_info=True)
+            logger.error("token family detail query failed", extra={"operation": "family_detail_query", "error_type": type(e).__name__})
             return jsonify({"error": str(e)}), 500
         finally:
             db.close()
@@ -920,7 +988,7 @@ def create_app(test_config=None):
                 })
             return jsonify(result), 200
         except Exception as e:
-            logger.error(f"Failed to fetch reuse records: {e}", exc_info=True)
+            logger.error("token reuse query failed", extra={"operation": "reuse_query", "error_type": type(e).__name__})
             return jsonify({"error": str(e)}), 500
         finally:
             db.close()
@@ -958,7 +1026,7 @@ def create_app(test_config=None):
             result = [r.to_dict() for r in records]
             return jsonify(result), 200
         except Exception as e:
-            logger.error(f"Failed to fetch alerts: {e}", exc_info=True)
+            logger.error("alert query failed", extra={"operation": "alert_query", "error_type": type(e).__name__})
             return jsonify({"error": str(e)}), 500
         finally:
             db.close()
@@ -979,7 +1047,7 @@ def create_app(test_config=None):
                 return jsonify({"error": "Alert not found"}), 404
             return jsonify(alert.to_dict()), 200
         except Exception as e:
-            logger.error(f"Failed to fetch alert '{alert_id}': {e}", exc_info=True)
+            logger.error("alert detail query failed", extra={"operation": "alert_detail_query", "error_type": type(e).__name__})
             return jsonify({"error": str(e)}), 500
         finally:
             db.close()
@@ -1036,7 +1104,7 @@ def create_app(test_config=None):
             return jsonify(alert.to_dict()), 200
         except Exception as e:
             db.rollback()
-            logger.error(f"Failed to update alert '{alert_id}': {e}", exc_info=True)
+            logger.error("alert update failed", extra={"operation": "alert_update", "error_type": type(e).__name__})
             return jsonify({"error": str(e)}), 500
         finally:
             db.close()
@@ -1097,7 +1165,7 @@ def create_app(test_config=None):
         try:
             events = nonlocal_run_scenario(scenario_name)
         except Exception as e:
-            logger.error(f"Failed to run scenario '{scenario_name}': {e}", exc_info=True)
+            logger.error("scenario execution failed", extra={"operation": "scenario_run", "error_type": type(e).__name__})
             return jsonify({"error": f"Failed to run scenario: {str(e)}"}), 400
 
         exec_id = f"exec-{uuid.uuid4().hex}"
@@ -1116,7 +1184,7 @@ def create_app(test_config=None):
             db_sess.add(exec_record)
             db_sess.commit()
         except Exception as e:
-            logger.warning(f"Could not record ScenarioExecution start for {scenario_name}: {e}")
+            logger.warning("scenario execution start could not be recorded", extra={"operation": "scenario_record_start", "error_type": type(e).__name__})
             db_sess.rollback()
         finally:
             db_sess.close()
@@ -1130,7 +1198,7 @@ def create_app(test_config=None):
                     try:
                         process_event(evt, db_sess)
                     except Exception as corr_err:
-                        logger.error(f"Correlation failed during scenario '{scenario_name}': {corr_err}", exc_info=True)
+                        logger.error("scenario event correlation failed", extra={"operation": "scenario_correlation", "error_type": type(corr_err).__name__})
                         raise corr_err
                 db_sess.commit()
 
@@ -1143,7 +1211,7 @@ def create_app(test_config=None):
                     db_exec.event_count = len(events)
                     db_sess.commit()
             except Exception as e:
-                logger.warning(f"Failed to update ScenarioExecution status for {exec_id}: {e}")
+                logger.warning("scenario execution status update failed", extra={"operation": "scenario_status_update", "error_type": type(e).__name__})
 
             return jsonify({
                 "scenario": scenario_name,
@@ -1166,9 +1234,9 @@ def create_app(test_config=None):
                 finally:
                     fail_sess.close()
             except Exception as err:
-                logger.warning(f"Failed to mark ScenarioExecution failed for {exec_id}: {err}")
+                logger.warning("scenario execution failure status could not be recorded", extra={"operation": "scenario_status_update", "error_type": type(err).__name__})
 
-            logger.error(f"Correlation failed during scenario '{scenario_name}': {e}", exc_info=True)
+            logger.error("scenario execution correlation failed", extra={"operation": "scenario_correlation", "error_type": type(e).__name__})
             return jsonify({
                 "error": "Correlation error",
                 "execution_id": exec_id,

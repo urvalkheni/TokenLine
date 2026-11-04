@@ -476,6 +476,25 @@ Do not rely on random blogs when authoritative documentation is available.
 
 The backend Event Collector service is a Python Flask API that validates incoming security/authentication lifecycle events against the JSON Schema at `schema/event.schema.json` and stores valid records in SQLite.
 
+### Health and readiness
+
+- `GET /health` is a liveness check and does not require the database.
+- `GET /ready` (also available as `/readiness`) checks database connectivity and verifies that the event schema has been initialized. It returns `503` until the collector can serve requests.
+
+These probes are unauthenticated so an orchestrator can check the service before routing traffic. Keep them on the collector's trusted network; they return only a generic status.
+
+### Operational logging and privacy
+
+Collector operational records are emitted as JSON with a UTC timestamp, severity, operation, and HTTP status where applicable. Request logs deliberately omit paths, query strings, headers, and payloads because these can contain event or identity data. Failures record a generic operation and exception class; exception text and stack traces are excluded. Do not add raw credentials or unnecessary user, token, IP, device, or user-agent values to operational logs.
+
+Events can contain pseudonymous user, token, IP, device, country, endpoint, and user-agent identifiers. Treat them as sensitive data even when hashed: restrict database and backup access, use encrypted storage and transport, and use synthetic values for demonstrations. Configure `EVENT_RETENTION_DAYS` (a positive integer, default `365`) and schedule cleanup regularly, for example daily:
+
+```cron
+0 2 * * * cd /path/to/TokenLine && .venv/bin/python scripts/cleanup_events.py
+```
+
+The command deletes events older than the configured age and reuse records linked to those events, and prints a JSON count and UTC cutoff. It does not delete alerts, token-family lineage, scenario execution history, backups, or database snapshots; define separate retention and deletion schedules for those records and copies. Use a durable SQLite volume or managed PostgreSQL storage, restrict access, and include backups in the retention plan.
+
 ### Prerequisites
 
 Ensure you have Python 3.12+ installed. Install the dependencies:

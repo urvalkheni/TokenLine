@@ -1330,8 +1330,8 @@ class TokenFamilyCorrelator:
             if commit and hasattr(db_session, "rollback"):
                 db_session.rollback()
             logger.error(
-                f"Database synchronization failed during correlation for event {event_data.get('event_id')}: {e}",
-                exc_info=True
+                "database synchronization failed during correlation",
+                extra={"operation": "correlation_db_sync", "error_type": type(e).__name__},
             )
             raise
 

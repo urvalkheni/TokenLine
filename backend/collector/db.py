@@ -2,7 +2,7 @@ import os
 import json
 from typing import Dict, Any, List, Optional
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from sqlalchemy import create_engine, Column, String, Boolean, Integer, UniqueConstraint, Index
 from sqlalchemy.types import TypeDecorator, DateTime
 from sqlalchemy.orm import declarative_base, sessionmaker
@@ -222,6 +222,50 @@ def init_db():
     Base.metadata.create_all(bind=engine)
     from backend.database.migrations import run_migrations
     run_migrations(engine)
+
+
+def delete_expired_events(retention_days, now=None):
+    """Delete events older than the configured retention window and their reuse rows."""
+    try:
+        retention_days = int(retention_days)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("retention_days must be a positive integer") from exc
+    if retention_days < 1:
+        raise ValueError("retention_days must be a positive integer")
+
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    cutoff = now.astimezone(timezone.utc) - timedelta(days=retention_days)
+
+    session = get_session()
+    try:
+        expired_events = session.query(Event.event_id).filter(Event.time < cutoff).subquery()
+        expired_count = session.query(Event).filter(Event.time < cutoff).count()
+        if not expired_count:
+            return {"deleted_events": 0, "deleted_reuse_records": 0, "cutoff": cutoff.isoformat()}
+
+        deleted_reuse_records = (
+            session.query(TokenReuseRecord)
+            .filter(TokenReuseRecord.attempted_event_id.in_(session.query(expired_events.c.event_id)))
+            .delete(synchronize_session=False)
+        )
+        deleted_events = (
+            session.query(Event)
+            .filter(Event.time < cutoff)
+            .delete(synchronize_session=False)
+        )
+        session.commit()
+        return {
+            "deleted_events": deleted_events,
+            "deleted_reuse_records": deleted_reuse_records,
+            "cutoff": cutoff.isoformat(),
+        }
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
 
 def insert_event(event_data, session=None):

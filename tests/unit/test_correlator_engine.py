@@ -542,8 +542,9 @@ def test_correlator_engine_db_sync_error_handling(correlator, caplog):
 
     # Verify rollback was called and error was logged (no silent except: pass)
     mock_session.rollback.assert_called()
-    assert "Database synchronization failed during correlation for event e-fail-sync" in caplog.text
-    assert "Database disk failure during sync" in caplog.text
+    assert "database synchronization failed during correlation" in caplog.text
+    assert "e-fail-sync" not in caplog.text
+    assert "Database disk failure during sync" not in caplog.text
 
 
 
