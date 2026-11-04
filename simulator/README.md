@@ -4,35 +4,35 @@ The Local Attack Simulator and Synthetic Dataset Generator produce realistic, de
 
 ---
 
-## Architecture & Security Boundary
+## 1. Architecture & Security Boundary
 
 - **Zero Network Egress**: All scenarios run entirely locally with synthetic users, tokens, IP hashes, and device IDs.
-- **Privacy-Preserving**: Only salted SHA-256 prefixes are emitted for tokens and IPs, strictly adhering to `schema/event.schema.json`.
+- **Privacy-Preserving**: Only salted SHA-256 prefixes are emitted for tokens and IPs, strictly adhering to [`schema/event.schema.json`](../schema/event.schema.json).
 - **Reproducible**: Every generator accepts a seed parameter for 100% reproducible test fixtures.
 - **Schema Validated**: Every generated event is validated against `schema/event.schema.json`.
+- **Controlled Benchmark Context**: These scenarios are designed for testing, calibration, and educational demonstration. Passing synthetic benchmark scenarios demonstrates pipeline logic correctness, but is not proof of production detection efficacy against adversarial evasion.
 
 ---
 
-## Scenarios & Synthetic Datasets
+## 2. Scenarios & Synthetic Datasets
 
-The generator produces six canonical datasets in `data/synthetic/`:
+The generator produces canonical datasets in `data/synthetic/`:
 
 | Scenario | Directory / Module | Output File | Description | Triggered Correlator/Detection Signal |
-|---|---|---|---|---|
-| **Normal Lifecycle** | `simulator/normal/` | [`normal.json`](file:///d:/TokenLine/TokenLine/data/synthetic/normal.json) | Baseline token issuance, legitimate use, refresh rotation, and logout. | None (All `accepted`) |
-| **Refresh-Token Reuse** | `simulator/refresh-reuse/` | [`refresh-reuse.json`](file:///d:/TokenLine/TokenLine/data/synthetic/refresh-reuse.json) | Issue token A, rotate A &rarr; B, adversary presents rotated token A again. | `token_refreshed` (Flagged as reuse; `rejected`) |
-| **Expired Token** | `simulator/expired-token/` | [`expired-token.json`](file:///d:/TokenLine/TokenLine/data/synthetic/expired-token.json) | Token issuance, legitimate use, expiry threshold reached, and invalid usage attempt. | `token_expired` &rarr; `token_used` (`rejected`) |
-| **Use After Logout** | `simulator/revoked-token/` | [`revoked-token.json`](file:///d:/TokenLine/TokenLine/data/synthetic/revoked-token.json) | Issue token A, user logs out / revokes session, adversary attempts to present token A. | `logout` &rarr; `token_used` (`rejected`) |
-| **Concurrent Use** | `simulator/concurrent-use/` | [`concurrent-use.json`](file:///d:/TokenLine/TokenLine/data/synthetic/concurrent-use.json) | Same token presented almost simultaneously from two distinct devices/IPs. | `suspicious_device` |
-| **Impossible Travel** | `simulator/impossible-travel/` | [`impossible-travel.json`](file:///d:/TokenLine/TokenLine/data/synthetic/impossible-travel.json) | Same token presented from distant geographical coordinates (e.g. IN to US) within 5 minutes. | `suspicious_location` |
-
-*(Note: The replay scenario is also available under `simulator/replay/` for replay attack simulation).*
+| :--- | :--- | :--- | :--- | :--- |
+| **Normal Lifecycle** | `simulator/normal/` | [`data/synthetic/normal.json`](../data/synthetic/normal.json) | Baseline token issuance, legitimate use, refresh rotation, and logout. | None (All `accepted`) |
+| **Refresh-Token Reuse** | `simulator/refresh-reuse/` | [`data/synthetic/refresh-reuse.json`](../data/synthetic/refresh-reuse.json) | Issue token A, rotate A &rarr; B, adversary presents rotated token A again. | `RULE-TOKEN-REUSE` (`critical`, `rejected`) |
+| **Expired Token** | `simulator/expired-token/` | [`data/synthetic/expired-token.json`](../data/synthetic/expired-token.json) | Token issuance, legitimate use, expiry threshold reached, and invalid usage attempt. | `RULE-EXPIRED-USE` (`high`, `rejected`) |
+| **Use After Logout** | `simulator/revoked-token/` | [`data/synthetic/revoked-token.json`](../data/synthetic/revoked-token.json) | Issue token A, user logs out / revokes session, adversary attempts to present token A. | `RULE-REVOKED-USE` (`high`, `rejected`) |
+| **Concurrent Use** | `simulator/concurrent-use/` | [`data/synthetic/concurrent-use.json`](../data/synthetic/concurrent-use.json) | Same token presented almost simultaneously from two distinct devices/IPs. | `RULE-CONCURRENT-USE` (`high`) |
+| **Impossible Travel** | `simulator/impossible-travel/` | [`data/synthetic/impossible-travel.json`](../data/synthetic/impossible-travel.json) | Same token presented from distant geographical coordinates (e.g. IN to US) within 5 minutes. | `RULE-IMPOSSIBLE-TRAVEL` (`high`) |
+| **Token Replay** | `simulator/replay/` | Synthetic Generator | Intercepted token replayed from an unauthorized host. | Replay detection signal |
 
 ---
 
-## Generating Datasets
+## 3. Generating Datasets
 
-### Generate All Six Datasets (Default: `data/synthetic/`)
+### Generate All Datasets (Default: `data/synthetic/`)
 ```bash
 python scripts/generate_datasets.py --seed 42
 ```
@@ -58,7 +58,7 @@ python scripts/generate_datasets.py --list
 
 ---
 
-## Running Scenarios in CLI
+## 4. Running Scenarios in CLI
 
 ### List Available Simulation Scenarios
 ```bash
@@ -82,8 +82,9 @@ python -m simulator --scenario refresh-reuse --collector-url http://127.0.0.1:50
 
 ---
 
-## Testing & Research Applications
+## 5. Testing & Evaluation
 
-- **Correlator Validation**: Run `py -m pytest tests/scenarios/test_synthetic_datasets.py` to ensure schema adherence, correct rotation links, and deterministic reproducibility.
+- **Correlator Validation**: Run `pytest tests/scenarios/test_synthetic_datasets.py` to ensure schema adherence, correct rotation links, and deterministic reproducibility.
 - **Rule Verification**: Verify detection rules against `refresh-reuse.json`, `expired-token.json`, `revoked-token.json`, `concurrent-use.json`, and `impossible-travel.json`.
 - **Baseline Calibration**: Use `normal.json` to verify that false alert rates are zero during benign token lifecycles.
+- **Classification Metrics**: Run `pytest tests/unit/test_alert_standard_and_evaluation.py` to evaluate precision, recall, specificity, and F1 scores against labeled incident benchmarks.

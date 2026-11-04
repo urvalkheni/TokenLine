@@ -1,62 +1,72 @@
 # TokenLine Detection Rules & Anomaly Signatures
 
-This document defines the core detection rules implemented and verified against the synthetic token lifecycle datasets.
+This document defines the core detection rules implemented and evaluated against synthetic token lifecycle datasets and event streams.
 
 ---
 
-## Detection Rule Matrix
+## 1. Detection Rule Matrix
 
-| Rule ID | Rule Name | Target Dataset | Input Event Type | Condition & Logic | Emitted Signal / Action |
-|---|---|---|---|---|---|
-| `TL-RULE-001` | **Refresh-Token Reuse Detection** | [`refresh-reuse.json`](file:///d:/TokenLine/TokenLine/data/synthetic/refresh-reuse.json) | `token_refreshed` | Presented `parent_token_hash` has `is_rotated == True` in `TokenFamilyMember`. | Record `TokenReuseRecord`, reject refresh (`result: rejected`), revoke family. |
-| `TL-RULE-002` | **Post-Revocation Token Use** | [`revoked-token.json`](file:///d:/TokenLine/TokenLine/data/synthetic/revoked-token.json) | `token_used` | Presented `token_hash` has status `REVOKED` or followed a `logout` event. | Deny access (`result: rejected`), trigger unauthorized access audit alert. |
-| `TL-RULE-003` | **Post-Expiration Token Use** | [`expired-token.json`](file:///d:/TokenLine/TokenLine/data/synthetic/expired-token.json) | `token_used` | Presented `token_hash` has status `EXPIRED` or timestamp exceeds issuance + TTL. | Deny access (`result: rejected`), force re-authentication. |
-| `TL-RULE-004` | **Concurrent Device Anomaly** | [`concurrent-use.json`](file:///d:/TokenLine/TokenLine/data/synthetic/concurrent-use.json) | `token_used` | Identical `token_hash` seen across distinct `device_id` values within threshold $\Delta t \le 60\text{s}$. | Log `suspicious_device` event, flag session for step-up authentication. |
-| `TL-RULE-005` | **Impossible Travel Velocity** | [`impossible-travel.json`](file:///d:/TokenLine/TokenLine/data/synthetic/impossible-travel.json) | `token_used` / `token_issued` | Consecutive events for same token have distance/time velocity $v > 900\text{ km/h}$. | Log `suspicious_location` event, challenge user with MFA, terminate token. |
-| `TL-RULE-006` | **Normal Baseline Validation** | [`normal.json`](file:///d:/TokenLine/TokenLine/data/synthetic/normal.json) | All | Sequential lifecycle events match expected state machine; no reuse or velocity violations. | Confirm `accepted`, maintain lineage tree, zero false positive alerts. |
+| Rule ID | Canonical Name | Target Dataset | Input Event Type | Condition & Logic | Severity & Emitted Action |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `TL-RULE-001`<br>`(RULE-TOKEN-REUSE)` | **Refresh-Token Reuse Detection** | [`data/synthetic/refresh-reuse.json`](../data/synthetic/refresh-reuse.json) | `token_refreshed` | Presented `parent_token_hash` has `is_rotated == True` in `TokenFamilyMember`. | `critical` severity. Record `TokenReuseRecord` and `AlertRecord`, reject refresh (`result: rejected`), revoke entire family. Tolerates legitimate replay of prior rotations. |
+| `TL-RULE-002`<br>`(RULE-REVOKED-USE)` | **Post-Revocation Token Use** | [`data/synthetic/revoked-token.json`](../data/synthetic/revoked-token.json) | `token_used`, other actions | Presented `token_hash` has status `REVOKED` (e.g. post-logout). | `high` severity. Log detection record & alert. Accounts for out-of-order event timestamps. |
+| `TL-RULE-003`<br>`(RULE-EXPIRED-USE)` | **Post-Expiration Token Use** | [`data/synthetic/expired-token.json`](../data/synthetic/expired-token.json) | `token_used`, other actions | Presented `token_hash` has status `EXPIRED` (timestamp past expiration). | `high` severity. Log detection record & alert. |
+| `TL-RULE-004`<br>`(RULE-CONCURRENT-USE)` | **Concurrent Device Anomaly** | [`data/synthetic/concurrent-use.json`](../data/synthetic/concurrent-use.json) | `token_used`, `token_refreshed` | Identical `token_hash` seen across distinct `device_id` or `ip_hash` values within $\Delta t \le 60\text{s}$. | `high` severity. Emits detection record & alert. Requests from the same device and IP are permitted. |
+| `TL-RULE-005`<br>`(RULE-IMPOSSIBLE-TRAVEL)`| **Impossible Travel Anomaly** | [`data/synthetic/impossible-travel.json`](../data/synthetic/impossible-travel.json) | `token_used`, `token_issued` | Consecutive events for same user/token originate from differing countries within $\Delta t \le 300\text{s}$ (5m). | `high` severity. Emits detection record & alert. |
+| `TL-RULE-006` | **Normal Baseline Validation** | [`data/synthetic/normal.json`](../data/synthetic/normal.json) | All | Sequential lifecycle events match expected state machine; no reuse or velocity violations. | Confirm `accepted`, maintain lineage tree, zero false positive alerts. |
 
 ---
 
-## Detailed Rule Explanations
+## 2. Detailed Rule Implementations
 
-### TL-RULE-001: Refresh-Token Reuse Detection
-- **Objective**: Prevent token family hijacking when an attacker obtains an already-rotated refresh token.
+### TL-RULE-001: Refresh-Token Reuse Detection (`RULE-TOKEN-REUSE`)
+- **Objective**: Prevent token family hijacking when an attacker obtains and replays an already-rotated refresh token.
 - **Reference**: RFC 6819 Section 5.2.2.3 (Refresh Token Rotation).
-- **Correlator Implementation**:
+- **Correlator Logic**:
   ```python
-  existing = db.query(TokenFamilyMember).filter(TokenFamilyMember.token_hash == parent_token_hash).first()
-  if existing and existing.is_rotated:
-      # Flag reuse violation
-      reuse_record = TokenReuseRecord(
-          token_hash=parent_token_hash,
-          token_family=existing.token_family,
-          reused_at=time,
-          attempted_event_id=event_id
-      )
+  if target_record and target_record.is_rotated:
+      if event_type == "token_refreshed" and target_record.superseded_by == token_hash:
+          # Legitimate replay of prior rotation - do not alert
+          pass
+      else:
+          # True reuse anomaly
+          record_alert(
+              rule_id=RULE_TOKEN_REUSE,
+              severity=AlertSeverity.CRITICAL.value,
+              ...
+          )
+          # Cascade revoke entire token family
+          for th in family_members:
+              mark_revoked(th)
   ```
 
-### TL-RULE-002: Use After Logout / Revocation
+### TL-RULE-002: Use After Logout / Revocation (`RULE-REVOKED-USE`)
 - **Objective**: Ensure session termination immediately invalidates all active tokens.
-- **Correlator Implementation**:
-  When a `logout` or `token_revoked` event is ingested, the target `TokenRecord` is updated to `TokenStatus.REVOKED`. Any subsequent `token_used` event for that hash is rejected.
+- **Correlator Logic**:
+  When a `logout` or `token_revoked` event is ingested, the target `TokenRecord` transitions to `TokenStatus.REVOKED`. If any subsequent event presents that token hash, the correlator checks the event timestamp against the revocation timestamp. If `dt_event >= dt_rev`, a violation alert is recorded.
 
-### TL-RULE-003: Use After Expiration
-- **Objective**: Prevent the acceptance of stale credentials.
-- **Correlator Implementation**:
-  When a `token_expired` event is recorded, the target `TokenRecord` transitions to `TokenStatus.EXPIRED`. Subsequent usage attempts result in `result: rejected`.
+### TL-RULE-003: Use After Expiration (`RULE-EXPIRED-USE`)
+- **Objective**: Prevent the acceptance of expired credentials.
+- **Correlator Logic**:
+  When a `token_expired` event is recorded, the target `TokenRecord` transitions to `TokenStatus.EXPIRED`. Subsequent usage attempts occurring after `expired_at` trigger `RULE-EXPIRED-USE`.
 
-### TL-RULE-004: Concurrent Device Presentation
-- **Objective**: Detect credential sharing or session sidejacking.
+### TL-RULE-004: Concurrent Device Presentation (`RULE-CONCURRENT-USE`)
+- **Objective**: Detect credential sharing or session sidejacking across separate machines.
 - **Evaluation Criteria**:
-  $$\Delta t = |t_2 - t_1| \le \text{Threshold (e.g. 60s)} \quad \text{and} \quad \text{device}_1 \ne \text{device}_2$$
-- If satisfied, the collector or detection engine emits `suspicious_device`.
+  $$\Delta t = |t_2 - t_1| \le 60\text{s} \quad \text{and} \quad (\text{device}_1 \ne \text{device}_2 \lor \text{ip}_1 \ne \text{ip}_2)$$
+  Parallel requests from the identical device and IP address are recognized as benign client concurrency.
 
-### TL-RULE-005: Impossible Travel Velocity
+### TL-RULE-005: Impossible Travel (`RULE-IMPOSSIBLE-TRAVEL`)
 - **Objective**: Detect access from distinct geographical regions impossible within the elapsed time window.
 - **Evaluation Criteria**:
-  $$v = \frac{\text{haversine}(\text{coord}_1, \text{coord}_2)}{\Delta t} > 900\text{ km/h}$$
-  In synthetic test datasets:
-  - Location 1: India (`IN`)
-  - Location 2: United States (`US`)
-  - Time interval: 240 seconds ($\approx 180,000\text{ km/h}$)
-  - Triggers `suspicious_location` rejection.
+  $$\Delta t = |t_2 - t_1| \le 300\text{s} \quad \text{and} \quad \text{country}_1 \ne \text{country}_2$$
+
+---
+
+## 3. Known Limitations & Operational Realities
+
+1. **Risk Indicators, Not Definite Compromises**: An alert represents an anomalous behavioral pattern. Normal user behavior (VPN connections, corporate gateway switching, mobile cellular/Wi-Fi handoff) frequently produces IP or country shifts without adversary involvement.
+2. **Coarse Country Resolution**: `RULE-IMPOSSIBLE-TRAVEL` evaluates country code transitions in test scenarios rather than continuous Haversine distance calculations over coordinates or ISP network routing data.
+3. **Sliding Window Lifetime**: Concurrent use and travel history are tracked in the correlator's memory; restarting the process clears recent sliding-window state unless warm-started.
+4. **Synthetic Test Data vs Production Defense**: Synthetic scenario tests verify the logical correctness of rules under controlled test inputs. They do not demonstrate resilience against advanced real-world adversarial evasion.
+5. **Unimplemented Concepts**: Session fixation analysis and continuous risk decay scoring are conceptual research proposals, not active automated rules in `engine.py`.

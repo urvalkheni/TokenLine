@@ -173,7 +173,7 @@ python -m pytest -v
 
 ### Flow 1: User Login & Token Issuance
 1. **User Action**: A user logs in at `demo-app/src/routes/auth.js`.
-2. **Demo App Processing**: The service creates an access JWT and an opaque refresh token. Before storing or sending anything, [`tokenId.hashToken()`](file:///d:/5sem/TokenLine/TokenLine/demo-app/src/utils/tokenId.js#L16) hashes the refresh token using HMAC-SHA256.
+2. **Demo App Processing**: The service creates an access JWT and an opaque refresh token. Before storing or sending anything, [`tokenId.hashToken()`](demo-app/src/utils/tokenId.js) hashes the refresh token using HMAC-SHA256.
 3. **Event Emission**: `demo-app/src/services/eventService.js` sends a `token_issued` event to `POST http://127.0.0.1:5000/events`.
 4. **Collector Validation**: `backend/collector/app.py` validates the schema against `schema/event.schema.json` and runs `contains_raw_credentials()`.
 5. **Correlation**: `backend/correlator/engine.py` registers the new token with status `TokenStatus.ACTIVE` in a new or existing token family.
@@ -398,13 +398,13 @@ python -m pytest -v
 
 To get productive in the codebase immediately, read these files in this exact order:
 
-1. [`README.md`](file:///d:/5sem/TokenLine/TokenLine/README.md) — The project mission and high-level vision.
-2. [`schema/event.schema.json`](file:///d:/5sem/TokenLine/TokenLine/schema/event.schema.json) — The canonical contract for all security events.
-3. [`backend/correlator/models.py`](file:///d:/5sem/TokenLine/TokenLine/backend/correlator/models.py) — The domain entities (`TokenRecord`, `TokenStatus`).
-4. [`backend/correlator/engine.py`](file:///d:/5sem/TokenLine/TokenLine/backend/correlator/engine.py) — The core correlation state machine.
-5. [`backend/collector/app.py`](file:///d:/5sem/TokenLine/TokenLine/backend/collector/app.py) — The Flask REST ingestion and query API.
-6. [`backend/collector/db.py`](file:///d:/5sem/TokenLine/TokenLine/backend/collector/db.py) — The database models and timezone handling.
-7. [`simulator/base.py`](file:///d:/5sem/TokenLine/TokenLine/simulator/base.py) — The synthetic scenario generation engine base class.
-8. [`simulator/runner.py`](file:///d:/5sem/TokenLine/TokenLine/simulator/runner.py) — The scenario runner and dispatcher.
-9. [`frontend/js/app.js`](file:///d:/5sem/TokenLine/TokenLine/frontend/js/app.js) — The frontend single-page application controller.
-10. [`tests/unit/test_correlator_engine.py`](file:///d:/5sem/TokenLine/TokenLine/tests/unit/test_correlator_engine.py) — Concrete examples of all lifecycle transitions.
+1. [`README.md`](README.md) — The project mission and high-level vision.
+2. [`schema/event.schema.json`](schema/event.schema.json) — The canonical contract for all security events.
+3. [`backend/correlator/models.py`](backend/correlator/models.py) — The domain entities (`TokenRecord`, `TokenStatus`).
+4. [`backend/correlator/engine.py`](backend/correlator/engine.py) — The core correlation state machine.
+5. [`backend/collector/app.py`](backend/collector/app.py) — The Flask REST ingestion and query API.
+6. [`backend/collector/db.py`](backend/collector/db.py) — The database models and timezone handling.
+7. [`simulator/base.py`](simulator/base.py) — The synthetic scenario generation engine base class.
+8. [`simulator/runner.py`](simulator/runner.py) — The scenario runner and dispatcher.
+9. [`frontend/js/app.js`](frontend/js/app.js) — The frontend single-page application controller.
+10. [`tests/unit/test_correlator_engine.py`](tests/unit/test_correlator_engine.py) — Concrete examples of all lifecycle transitions.
