@@ -371,6 +371,47 @@ code, pre, .hash, .token-hash, .event-id, .timestamp, .ip-hash, .mono {
   gap: var(--space-4);
 }
 
+.data-mode-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+}
+
+.data-mode-control select {
+  min-height: 36px;
+  padding: 0 8px;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.data-source-status {
+  padding: 8px 24px;
+  border-bottom: 1px solid var(--border-hairline);
+  background: var(--bg-panel);
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  text-align: center;
+}
+
+.data-source-status.demo {
+  color: var(--warning-amber, #d6a84f);
+}
+
+.data-source-status.error,
+.data-source-status.auth {
+  color: var(--danger-red);
+}
+
+.data-source-status a {
+  margin-left: 8px;
+  color: var(--accent-cyan);
+}
+
 /* Mobile Nav Toggle */
 .mobile-nav-toggle {
   display: none;

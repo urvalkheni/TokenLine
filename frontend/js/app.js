@@ -20,9 +20,35 @@ document.addEventListener('DOMContentLoaded', () => {
   const mobileOverlay = document.getElementById('mobile-overlay');
   const navLinks = document.querySelectorAll('.nav-link, .mobile-link');
   const viewSections = document.querySelectorAll('.view-page');
+  const dataModeSelect = document.getElementById('app-data-mode');
+  const dataSourceStatus = document.getElementById('data-source-status');
+
+  function renderDataStatus(detail) {
+    dataSourceStatus.className = `data-source-status ${detail.state}`;
+    dataSourceStatus.textContent = detail.message;
+    if (detail.state === 'auth' || detail.state === 'error') {
+      const link = document.createElement('a');
+      link.href = '/dashboard/index.html';
+      link.textContent = 'Configure collector access in Dashboard Settings';
+      dataSourceStatus.appendChild(link);
+    }
+  }
+
+  dataModeSelect.value = TokenDataService.getMode();
+  renderDataStatus(dataModeSelect.value === 'demo'
+    ? { state: 'demo', message: 'Demo mode: synthetic fixture data is being shown.' }
+    : { state: 'loading', message: 'Live mode: connecting to the collector…' });
+  dataModeSelect.addEventListener('change', () => {
+    TokenDataService.setMode(dataModeSelect.value);
+    handleRoute();
+  });
+  window.addEventListener('tokenline:data-status', event => renderDataStatus(event.detail));
 
   // --- INITIALIZE ROUTING ---
-  function handleRoute() {
+  async function handleRoute() {
+    viewSections.forEach(section => {
+      section.style.visibility = '';
+    });
     const hash = window.location.hash.replace('#', '') || 'home';
     const validViews = ['home', 'how-it-works', 'demo', 'families', 'docs', 'about'];
     
@@ -41,16 +67,25 @@ document.addEventListener('DOMContentLoaded', () => {
     window.scrollTo(0, 0);
 
     // View-specific initializations
-    if (currentView === 'home') {
-      initHomeView();
-    } else if (currentView === 'how-it-works') {
-      initStagesView();
-    } else if (currentView === 'demo') {
-      initDemoView();
-    } else if (currentView === 'families') {
-      initFamiliesView();
-    } else if (currentView === 'docs') {
-      initDocsView();
+    try {
+      if (currentView === 'home') {
+        await initHomeView();
+      } else if (currentView === 'how-it-works') {
+        await initStagesView();
+      } else if (currentView === 'demo') {
+        await initDemoView();
+      } else if (currentView === 'families') {
+        await initFamiliesView();
+      } else if (currentView === 'docs') {
+        await initDocsView();
+      }
+    } catch (error) {
+      const activeSection = document.getElementById(`view-${currentView}`);
+      if (activeSection) activeSection.style.visibility = 'hidden';
+      renderDataStatus({
+        state: error.status === 401 || error.status === 403 ? 'auth' : 'error',
+        message: error.message || 'Unable to load collector data.',
+      });
     }
   }
 

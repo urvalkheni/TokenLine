@@ -1,9 +1,4 @@
-/**
- * TokenLine Dashboard - Core Logic (HTML Integration & UI Shell Scaffolding)
- * 
- * NOTE: This is currently using mock data. Look for "[API INTEGRATION POINT]" 
- * comments below to wire this up to the Python Event Collector REST API.
- */
+/** TokenLine dashboard with explicit live collector and demo data modes. */
 
 // --- MOCK DATABASE DATASETS ---
 const MOCK_EVENTS = [
@@ -131,8 +126,9 @@ const MOCK_EVENTS = [
 
 // --- APP STATE ---
 let activeTab = 'dashboard';
-let eventsList = [...MOCK_EVENTS];
+let eventsList = [];
 let selectedTimelineEvent = null;
+let dataMode = sessionStorage.getItem('tokenline.dataMode') || 'live';
 
 // --- DOM ELEMENT REFERENCES ---
 const navItems = document.querySelectorAll('.nav-item');
@@ -144,6 +140,7 @@ const tokenSearchInput = document.getElementById('token-search');
 document.addEventListener('DOMContentLoaded', () => {
   setupNavigation();
   setupSearch();
+  setupDataSettings();
   loadDashboardData();
   setupAlertsView();
 });
@@ -204,25 +201,148 @@ function formatDate(isoString) {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ` (${date.toLocaleDateString()})`;
 }
 
-function getEvents() {
-  return fetch('http://127.0.0.1:5000/events')
-    .then(res => res.json())
-    .then(data => {
-      eventsList = data; // Update global state
-      return data;
-    })
-    .catch(err => {
-      console.error('Failed to fetch live events, falling back to mock data:', err);
-      return eventsList; 
-    });
+function setCollectorStatus(label, state) {
+  const status = document.getElementById('collector-status');
+  const dot = status?.querySelector('.status-dot');
+  if (!status || !dot) return;
+  dot.className = `status-dot ${state}`;
+  status.lastChild.textContent = ` ${label}`;
+  const indicator = document.getElementById('live-indicator');
+  if (indicator) {
+    indicator.textContent = dataMode === 'demo'
+      ? 'DEMO DATA'
+      : state === 'healthy'
+        ? 'LIVE'
+        : state === 'loading'
+          ? 'LOADING'
+          : state === 'auth'
+            ? 'AUTH REQUIRED'
+            : 'UNAVAILABLE';
+    indicator.className = state === 'error' || state === 'auth' ? 'badge offline' : 'badge';
+  }
+}
+
+function showTableMessage(message, table = eventFeedTable) {
+  if (!table) return;
+  table.textContent = '';
+  if (table.tagName !== 'TBODY') {
+    const paragraph = document.createElement('p');
+    paragraph.className = 'table-message';
+    paragraph.textContent = message;
+    table.appendChild(paragraph);
+    return;
+  }
+  const row = document.createElement('tr');
+  const cell = document.createElement('td');
+  cell.colSpan = 6;
+  cell.className = 'table-message';
+  cell.textContent = message;
+  row.appendChild(cell);
+  table.appendChild(row);
+}
+
+async function getEvents() {
+  if (dataMode === 'demo') {
+    eventsList = [...MOCK_EVENTS];
+    setCollectorStatus('Demo data selected', 'demo');
+    return eventsList;
+  }
+
+  setCollectorStatus('Loading live events…', 'loading');
+  try {
+    const events = await TokenLineApi.getEvents();
+    if (!Array.isArray(events)) throw new Error('Collector returned an invalid event response.');
+    eventsList = events;
+    setCollectorStatus('Collector connected · Live data', 'healthy');
+    return eventsList;
+  } catch (error) {
+    eventsList = [];
+    const authFailure = error.status === 401 || error.status === 403;
+    setCollectorStatus(authFailure ? 'Authentication required' : 'Collector unavailable', authFailure ? 'auth' : 'error');
+    throw error;
+  }
+}
+
+function setupDataSettings() {
+  const config = TokenLineApi.getConfig();
+  const modeSelect = document.getElementById('setting-data-mode');
+  const apiUrl = document.getElementById('setting-api-url');
+  const apiKeyState = document.getElementById('api-key-state');
+  const clearKey = document.getElementById('clear-api-key');
+  const message = document.getElementById('settings-message');
+  modeSelect.value = dataMode;
+  apiUrl.value = config.baseUrl;
+  apiKeyState.textContent = config.hasApiKey ? 'A key is saved for this tab.' : 'No API key saved for this tab.';
+
+  modeSelect.addEventListener('change', () => {
+    dataMode = modeSelect.value;
+    sessionStorage.setItem('tokenline.dataMode', dataMode);
+    loadDashboardData();
+  });
+
+  document.getElementById('save-api-settings').addEventListener('click', () => {
+    try {
+      const keyInput = document.getElementById('setting-api-key');
+      const updated = TokenLineApi.configure({
+        baseUrl: apiUrl.value,
+        apiKey: keyInput.value,
+        clearApiKey: clearKey.checked,
+      });
+      keyInput.value = '';
+      clearKey.checked = false;
+      apiUrl.value = updated.baseUrl;
+      apiKeyState.textContent = updated.hasApiKey ? 'A key is saved for this tab.' : 'No API key saved for this tab.';
+      message.textContent = 'Settings saved. Connecting to the collector…';
+      dataMode = modeSelect.value;
+      sessionStorage.setItem('tokenline.dataMode', dataMode);
+      loadDashboardData();
+    } catch (error) {
+      message.textContent = error.message;
+    }
+  });
 }
 
 // --- 1. DASHBOARD LOADERS ---
 async function loadDashboardData() {
-  const events = await getEvents();
+  ['metric-active', 'metric-alerts', 'metric-revoked', 'metric-sessions'].forEach(id => {
+    document.getElementById(id).textContent = '—';
+  });
+  showTableMessage(dataMode === 'demo' ? 'Loading demo events…' : 'Loading live events…');
+  let events;
+  let families = {};
+  try {
+    events = await getEvents();
+    if (dataMode === 'live') {
+      families = await TokenLineApi.getFamilies();
+      if (!families || typeof families !== 'object' || Array.isArray(families)) {
+        throw new Error('Collector returned an invalid token family response.');
+      }
+    }
+  } catch (error) {
+    const authFailure = error.status === 401 || error.status === 403;
+    setCollectorStatus(authFailure ? 'Authentication required' : 'Collector unavailable', authFailure ? 'auth' : 'error');
+    ['metric-active', 'metric-alerts', 'metric-revoked', 'metric-sessions'].forEach(id => {
+      document.getElementById(id).textContent = '—';
+    });
+    showTableMessage(error.message);
+    return;
+  }
   
   // Calculate summary metrics
-  const activeCount = new Set(events.filter(e => e.result === 'accepted' && e.event_type !== 'logout' && e.event_type !== 'token_expired').map(e => e.token_hash)).size;
+  const rotatedTokens = new Set(events.map(event => event.parent_token_hash).filter(Boolean));
+  const latestEventByToken = new Map();
+  [...events].sort((a, b) => new Date(b.time) - new Date(a.time)).forEach(event => {
+    if (event.token_hash && !latestEventByToken.has(event.token_hash)) {
+      latestEventByToken.set(event.token_hash, event);
+    }
+  });
+  const activeCount = dataMode === 'live'
+    ? Object.values(families).flat().filter(token => token.status === 'active').length
+    : [...latestEventByToken.entries()].filter(([tokenHash, event]) =>
+      event.result === 'accepted' &&
+      !rotatedTokens.has(tokenHash) &&
+      !['logout', 'token_expired', 'token_revoked'].includes(event.event_type)
+    ).length;
   const alertCount = events.filter(e => 
     e.event_type.includes('reuse') || 
     (e.event_type.includes('expired') && e.event_type !== 'token_expired') || 
@@ -230,8 +350,13 @@ async function loadDashboardData() {
     e.event_type.includes('replay') ||
     (e.event_type === 'token_used' && e.result === 'rejected')
   ).length;
-  const revokedCount = events.filter(e => e.event_type === 'token_revoked' || e.result === 'rejected').length;
-  const sessionsCount = new Set(events.map(e => e.token_family)).size;
+  const revokedCount = new Set(events
+    .filter(e => e.event_type === 'token_revoked' || e.event_type === 'logout')
+    .map(e => e.token_hash)
+    .filter(Boolean)).size;
+  const sessionsCount = dataMode === 'live'
+    ? Object.keys(families).length
+    : new Set(events.map(e => e.token_family).filter(Boolean)).size;
 
   // Render values
   document.getElementById('metric-active').textContent = activeCount;
@@ -241,7 +366,14 @@ async function loadDashboardData() {
 
   // Render recent activity feed
   eventFeedTable.textContent = '';
-  events.slice(-8).reverse().forEach(event => {
+  if (events.length === 0) {
+    showTableMessage(dataMode === 'demo' ? 'No demo events are available.' : 'No events are stored in the collector yet.');
+    return;
+  }
+  [...events]
+    .sort((a, b) => new Date(b.time) - new Date(a.time))
+    .slice(0, 8)
+    .forEach(event => {
     const tr = document.createElement('tr');
     
     // Severity mapping
@@ -295,7 +427,13 @@ async function loadDashboardData() {
 
 // --- 2. TIMELINE VISUALIZER ---
 async function renderTimelineForToken(tokenHash) {
-  const events = await getEvents();
+  let events;
+  try {
+    events = await getEvents();
+  } catch (error) {
+    showTableMessage(error.message, document.getElementById('timeline-flow-container'));
+    return;
+  }
   document.getElementById('current-chain-id').textContent = maskToken(tokenHash);
 
   // Find the family for this token
@@ -480,7 +618,13 @@ function setupAlertsView() {
 }
 
 async function renderAlerts() {
-  const events = await getEvents();
+  let events;
+  try {
+    events = await getEvents();
+  } catch (error) {
+    showTableMessage(error.message, document.getElementById('alerts-table-body'));
+    return;
+  }
   const severityFilter = document.getElementById('filter-severity').value;
   const typeFilter = document.getElementById('filter-type').value;
   const alertsTable = document.getElementById('alerts-table-body');
