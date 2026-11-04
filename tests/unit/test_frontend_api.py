@@ -221,7 +221,8 @@ def test_event_filters_remain_authorized(client):
 
 
 def test_event_query_failure_does_not_disclose_exception(client, monkeypatch):
-    import backend.collector.app as collector_app
+    from importlib import import_module
+    collector_app = import_module("backend.collector.app")
 
     def fail_session_creation():
         raise RuntimeError("database password must not be disclosed")

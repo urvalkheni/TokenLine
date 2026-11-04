@@ -179,6 +179,16 @@ _cached_url = None
 _SessionLocal = None
 
 
+def dispose_engine():
+    """Close pooled connections and reset the cached database engine."""
+    global _engine, _cached_url, _SessionLocal
+    if _engine is not None:
+        _engine.dispose()
+    _engine = None
+    _cached_url = None
+    _SessionLocal = None
+
+
 def get_engine():
     global _engine, _cached_url, _SessionLocal
     db_url = os.environ.get("DATABASE_URL", "sqlite:///./tokenline.db")
@@ -189,11 +199,14 @@ def get_engine():
         db_url = f"{db_url}{separator}sslmode=require"
 
     if _engine is None or _cached_url != db_url:
-        _cached_url = db_url
         if db_url.startswith("sqlite"):
-            _engine = create_engine(db_url, connect_args={"check_same_thread": False})
+            new_engine = create_engine(db_url, connect_args={"check_same_thread": False})
         else:
-            _engine = create_engine(db_url)
+            new_engine = create_engine(db_url)
+        if _engine is not None:
+            _engine.dispose()
+        _engine = new_engine
+        _cached_url = db_url
         _SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_engine)
     return _engine
 
