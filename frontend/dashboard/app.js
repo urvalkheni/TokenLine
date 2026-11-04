@@ -128,7 +128,9 @@ const MOCK_EVENTS = [
 let activeTab = 'dashboard';
 let eventsList = [];
 let selectedTimelineEvent = null;
-let dataMode = sessionStorage.getItem('tokenline.dataMode') || 'live';
+let dataMode = (typeof sessionStorage !== 'undefined'
+  ? sessionStorage.getItem('tokenline.dataMode')
+  : null) || 'live';
 
 // --- DOM ELEMENT REFERENCES ---
 const navItems = document.querySelectorAll('.nav-item');
@@ -313,9 +315,15 @@ async function loadDashboardData() {
   try {
     events = await getEvents();
     if (dataMode === 'live') {
-      families = await TokenLineApi.getFamilies();
-      if (!families || typeof families !== 'object' || Array.isArray(families)) {
-        throw new Error('Collector returned an invalid token family response.');
+      // Events remain useful when the optional family summary endpoint is
+      // unavailable (and in environments that only provide event data).
+      try {
+        families = await TokenLineApi.getFamilies();
+        if (!families || typeof families !== 'object' || Array.isArray(families)) {
+          families = {};
+        }
+      } catch (error) {
+        families = {};
       }
     }
   } catch (error) {
