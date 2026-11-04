@@ -42,7 +42,7 @@ sequenceDiagram
 
 ### A. Demo Application (`demo-app/`)
 * **Purpose:** Simulates an Identity Provider (IdP) or client-facing web application.
-* **How it Works:** 
+* **How it Works:**
   * Exposes REST endpoints for user authentication: `/auth/login`, `/auth/refresh`, and `/auth/logout`.
   * Issues JSON Web Tokens (JWT) for access and cryptographically secure random values for refresh tokens.
   * Uses [`demo-app/src/services/eventService.js`](demo-app/src/services/eventService.js) to build event metadata on every user action.

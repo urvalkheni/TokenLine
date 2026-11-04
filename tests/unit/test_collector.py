@@ -246,8 +246,9 @@ def test_correlation_failure_is_logged_and_not_silent_success(client, monkeypatc
     res_data = response.get_json()
     assert res_data.get("error") == "Correlation error"
     assert "Correlation failed" in res_data.get("message", "")
-    assert "Correlation failed for event evt-correlate-fail" in caplog.text
-    assert "Simulated engine failure during correlation" in caplog.text
+    assert "event correlation failed" in caplog.text
+    assert "evt-correlate-fail" not in caplog.text
+    assert "Simulated engine failure during correlation" not in caplog.text
 
 
 def test_safe_database_session_lifecycle():

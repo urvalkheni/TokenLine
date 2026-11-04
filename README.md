@@ -164,6 +164,11 @@ npm --version
    ```
    The collector starts on `http://127.0.0.1:5000` by default.
 
+6. **Check collector health**:
+   - `GET /health` reports process liveness and does not require the database.
+   - `GET /ready` (also `/readiness`) checks database connectivity and initialized event schema. It returns `503` while the collector is not ready.
+   These endpoints are unauthenticated for orchestrator probes; keep them on the trusted collector network.
+
 ### 3. Demo Authentication Application Setup
 
 In a new terminal window:
@@ -202,6 +207,7 @@ In a new terminal window:
 | `TOKENLINE_ENV` | `production` (if unset) | Execution environment mode: `development`, `test`, or `production`. When set to `production`, strict security checks are enforced at startup. |
 | `PORT` | `5000` | Port for the Flask Event Collector HTTP service. |
 | `DATABASE_URL` | `sqlite:///./tokenline.db` | SQLAlchemy connection URL. Supports local SQLite or PostgreSQL (such as hosted Neon). |
+| `EVENT_RETENTION_DAYS` | `365` | Positive integer retention period for event records and linked reuse records. Run `python scripts/cleanup_events.py` on a schedule to delete expired records. |
 | `COLLECTOR_ADMIN_API_KEY` | *(None)* | API credential granting full administrative permissions (minimum 16 characters). |
 | `COLLECTOR_INGEST_API_KEY` | *(None)* | API credential granting event ingestion permissions for `POST /events`. |
 | `COLLECTOR_READ_API_KEY` | *(None)* | API credential granting read-only query permissions for dashboard APIs. |
@@ -362,7 +368,7 @@ The evaluator ([`backend/correlator/evaluator.py`](backend/correlator/evaluator.
 
 > [!WARNING]
 > **Risk Signals, Not Proof of Compromise**: Detections produced by TokenLine indicate anomalous behavioral risk, **not** definitive proof of malicious compromise. Real-world systems exhibit non-adversarial anomalies:
-> 
+>
 > - **VPN & Proxy Switching**: When a legitimate user connects to or disconnects from a VPN, their public IP and country will jump instantaneously, triggering `RULE-IMPOSSIBLE-TRAVEL`.
 > - **Mobile Network Handoff**: A smartphone switching from cellular LTE to local Wi-Fi changes IP addresses while performing concurrent background API calls, which can trigger `RULE-CONCURRENT-USE`.
 > - **Coarse Geolocation**: TokenLine's impossible-travel check currently operates on ISO country codes and time thresholds, rather than Haversine spherical flight speed calculations or ISP BGP/ASN telemetry.
@@ -415,6 +421,9 @@ Before any event is persisted or passed to the correlator, `backend/collector/ap
 
 - **Local Storage Artifact**: In local development, all data resides in the local SQLite database file `tokenline.db`. Deleting or recreating this file immediately wipes all stored history.
 - **Hosted PostgreSQL (Neon)**: Can be cleared via database migrations or table truncates.
+- **Configured retention**: `EVENT_RETENTION_DAYS` defaults to `365`. Schedule `python scripts/cleanup_events.py` daily, for example with `0 2 * * * cd /path/to/TokenLine && .venv/bin/python scripts/cleanup_events.py`. The command removes expired events and token reuse records linked to those events and prints JSON counts plus the UTC cutoff.
+- **Other stored data**: Alerts, token-family lineage, scenario execution history, database backups, and snapshots are not removed by this event cleanup command. Define separate retention and deletion schedules for them and their copies. Restrict database and backup access, use encrypted storage and transport, and use a durable SQLite volume or managed PostgreSQL storage.
+- **Operational logs**: Collector logs use JSON records with UTC timestamps and generic operation/error-class details. Request logs omit paths, query strings, headers, and payloads. Do not log raw credentials or unnecessary user, token, IP, device, or user-agent identifiers. These event fields can be sensitive even when pseudonymized; use synthetic values for demonstrations.
 - **Synthetic Data Exclusivity**: TokenLine is designed exclusively for synthetic, simulated, or controlled demonstration data. Connecting real user accounts, production credentials, or live identity providers is strictly prohibited.
 - **Zero External Network Egress**: The attack simulator and scenario generators operate entirely on localhost. No packets are transmitted to external networks during attack simulation.
 

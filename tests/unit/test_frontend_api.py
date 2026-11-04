@@ -216,7 +216,8 @@ def test_scenario_run_correlation_failure_is_not_silent_success(client, monkeypa
 
     assert res.status_code == 500
     assert res.get_json().get("error") == "Correlation error"
-    assert "Correlator failure during scenario batch" in caplog.text
+    assert "scenario event correlation failed" in caplog.text
+    assert "Correlator failure during scenario batch" not in caplog.text
 
 
 def test_unauthenticated_requests_rejected_on_all_frontend_api_endpoints(client):
