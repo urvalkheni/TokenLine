@@ -1,8 +1,6 @@
 /**
  * TokenLine Data Module - Live API Client & Deterministic Scenario Fixtures
  */
-const API_BASE = '/api';
-
 // --- BUILT-IN DETERMINISTIC SYNTHETIC FIXTURES (Generated from Local Simulator) ---
 const SCENARIO_FIXTURES = {
   "replay": [
@@ -377,39 +375,52 @@ const INITIAL_EVENTS = [
   ...SCENARIO_FIXTURES["impossible-travel"]
 ];
 
+let dataMode = sessionStorage.getItem('tokenline.dataMode') || 'demo';
+
 const TokenDataService = {
-  async getEvents() {
+  getMode() {
+    return dataMode;
+  },
+
+  setMode(mode) {
+    if (!['live', 'demo'].includes(mode)) throw new Error('Data mode must be live or demo.');
+    dataMode = mode;
+    sessionStorage.setItem('tokenline.dataMode', mode);
+    this.notifyStatus(mode === 'demo'
+      ? { state: 'demo', message: 'Demo mode: synthetic fixture data is being shown.' }
+      : { state: 'loading', message: 'Live mode: connecting to the collector…' });
+  },
+
+  notifyStatus(detail) {
+    window.dispatchEvent(new CustomEvent('tokenline:data-status', { detail }));
+  },
+
+  async useLiveData(request) {
     try {
-      const res = await fetch(`${API_BASE}/events?limit=100`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data && data.length > 0) return data;
-      }
-    } catch (e) {
-      // Fallback
+      const value = await request();
+      this.notifyStatus({ state: 'healthy', message: 'Live collector data connected.' });
+      return value;
+    } catch (error) {
+      this.notifyStatus({ state: error.status === 401 || error.status === 403 ? 'auth' : 'error', message: error.message });
+      throw error;
     }
-    return INITIAL_EVENTS;
+  },
+
+  async getEvents() {
+    return dataMode === 'demo'
+      ? [...INITIAL_EVENTS]
+      : this.useLiveData(() => TokenLineApi.getEvents());
   },
 
   async getFamilies() {
-    try {
-      const res = await fetch(`${API_BASE}/families`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data && Object.keys(data).length > 0) return data;
-      }
-    } catch (e) {
-      // Fallback
-    }
-    return INITIAL_FAMILIES;
+    return dataMode === 'demo'
+      ? INITIAL_FAMILIES
+      : this.useLiveData(() => TokenLineApi.getFamilies());
   },
 
   async getFamilyDetail(familyId) {
-    try {
-      const res = await fetch(`${API_BASE}/families/${familyId}`);
-      if (res.ok) return await res.json();
-    } catch (e) {
-      // Fallback
+    if (dataMode === 'live') {
+      return this.useLiveData(() => TokenLineApi.getFamilyDetail(familyId));
     }
     if (INITIAL_FAMILIES[familyId]) {
       return {
@@ -458,15 +469,8 @@ const TokenDataService = {
   },
 
   async runScenario(scenarioId) {
-    try {
-      const res = await fetch(`${API_BASE}/scenarios/${scenarioId}/run`, { method: 'POST' });
-      if (res.ok) {
-        const data = await res.json();
-        return data.events;
-      }
-    } catch (e) {
-      // Fallback
-    }
-    return SCENARIO_FIXTURES[scenarioId] || [];
+    if (dataMode === 'demo') return SCENARIO_FIXTURES[scenarioId] || [];
+    const result = await this.useLiveData(() => TokenLineApi.runScenario(scenarioId));
+    return result.events;
   }
 };

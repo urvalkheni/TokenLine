@@ -49,8 +49,8 @@
           <input type="text" id="token-search" placeholder="Search by Token ID or Hash..." autocomplete="off">
         </div>
         <div class="top-bar-right">
-          <div class="status-indicator">
-            <span class="status-dot healthy"></span> Collector Connected
+          <div class="status-indicator" id="collector-status" role="status" aria-live="polite">
+            <span class="status-dot loading"></span> Checking collector…
           </div>
         </div>
       </header>
@@ -73,14 +73,14 @@
               <span class="card-desc">Healthy active sessions</span>
             </div>
             <div class="card">
-              <h3>Alerts Today</h3>
+              <h3>Alerts</h3>
               <div class="metric danger" id="metric-alerts">0</div>
-              <span class="card-desc">Suspicious actions flagged</span>
+              <span class="card-desc">Flagged collector events</span>
             </div>
             <div class="card">
-              <h3>Revoked Today</h3>
+              <h3>Revocations</h3>
               <div class="metric warning" id="metric-revoked">0</div>
-              <span class="card-desc">Sessions terminated</span>
+              <span class="card-desc">Unique revoked tokens</span>
             </div>
             <div class="card">
               <h3>Sessions Tracked</h3>
@@ -93,7 +93,7 @@
           <div class="activity-section">
             <div class="section-title-bar">
               <h3>Recent Ingested Events</h3>
-              <span class="badge" id="live-indicator">LIVE</span>
+              <span class="badge" id="live-indicator">LOADING</span>
             </div>
             <div class="feed-table-container">
               <table class="data-table">
@@ -210,17 +210,29 @@
           </div>
           <div class="card settings-card">
             <h3>REST API Integration</h3>
-            <p class="settings-desc">TokenLine is currently in mock mode. You can link this UI shell to your running Python Event Collector service by providing the API endpoint below.</p>
+            <p class="settings-desc">Choose live collector data or clearly labeled demo fixtures. Live requests use a read-capable collector API key saved only for this browser tab.</p>
+            <div class="form-group">
+              <label for="setting-data-mode">Data source</label>
+              <select id="setting-data-mode">
+                <option value="live">Live collector</option>
+                <option value="demo">Demo data</option>
+              </select>
+            </div>
             <div class="form-group">
               <label for="setting-api-url">Event Collector URL</label>
-              <input type="text" id="setting-api-url" value="http://localhost:5000" disabled>
+              <input type="url" id="setting-api-url" value="http://127.0.0.1:5000/api" autocomplete="url">
             </div>
             <div class="form-group">
-              <label for="setting-db-driver">Active Database</label>
-              <input type="text" id="setting-db-driver" value="SQLite (tokenline.db)" disabled>
+              <label for="setting-api-key">Read API key</label>
+              <input type="password" id="setting-api-key" placeholder="Enter a read-capable API key" autocomplete="new-password">
+              <small id="api-key-state">No API key saved for this tab.</small>
             </div>
             <div class="form-group">
-              <span class="badge offline">Read-Only Scaffolding</span>
+              <label class="checkbox-label"><input type="checkbox" id="clear-api-key"> Remove saved API key</label>
+            </div>
+            <div class="form-group settings-actions">
+              <button class="settings-button" id="save-api-settings" type="button">Save and connect</button>
+              <span id="settings-message" role="status" aria-live="polite"></span>
             </div>
           </div>
         </section>
@@ -230,6 +242,7 @@
 
   </div>
 
+  <script src="../js/api-client.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

@@ -417,17 +417,17 @@ The repository contains two frontend user interfaces, both designed to function 
 
 ### 1. Interactive Single-Page Application (`frontend/index.html`)
 
-- **Live Mode**: When loaded from the running collector (`http://127.0.0.1:5000`), the client service ([`frontend/js/data.js`](frontend/js/data.js)) automatically queries the collector API endpoints:
+- **Live Mode**: Choose **Live** in the data-source selector to query protected collector endpoints through the shared authenticated client ([`frontend/js/api-client.js`](frontend/js/api-client.js)). Configure the collector URL and read-capable API key in Dashboard Settings. The key is held in browser `sessionStorage` for the current tab.
   - `GET /api/events?limit=100` — live ingested events
   - `GET /api/families` — correlated token family memberships
   - `GET /api/families/<id>` — lineage chains
   - `POST /api/scenarios/<id>/run` — on-demand scenario execution
-- **Offline / Mock Fallback**: If the backend is unreachable or returns empty data, `TokenDataService` automatically and silently falls back to pre-bundled scenario fixtures (`INITIAL_EVENTS` and `INITIAL_FAMILIES`). This allows developers to demonstrate the UI, the dynamic SVG tree diagram, and the 3D globe without running the backend.
+- **Demo Mode**: Choose **Demo** to display clearly labeled synthetic fixtures (`INITIAL_EVENTS` and `INITIAL_FAMILIES`) for demonstrations without a running backend. Live request failures are displayed as authentication or connection errors; they never switch to fixture data.
 
 ### 2. Operational Dashboard (`frontend/dashboard/index.html`)
 
-- **Live Fetching**: Configured in [`frontend/dashboard/app.js`](frontend/dashboard/app.js) to query `http://127.0.0.1:5000/events`.
-- **Mock Fallback**: If the fetch fails due to network or CORS errors, it catches the exception and falls back to an internal mock data array, rendering warning details in the browser console.
+- **Live and Demo Modes**: The dashboard uses the shared authenticated API client. Choose the source in Settings; live status appears only after a successful collector request, while Demo mode is visibly labeled and uses synthetic data.
+- **Failure States**: Loading, empty, authentication, and connection errors are shown in the dashboard. A failed live request never falls back to mock events.
 
 ---
 

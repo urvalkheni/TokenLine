@@ -178,6 +178,18 @@ h1, h2, h3, .logo {
   background-color: var(--color-success);
 }
 
+.status-dot.demo {
+  background-color: #d6a84f;
+}
+
+.status-dot.loading {
+  background-color: var(--color-text-secondary);
+}
+
+.status-dot.error {
+  background-color: var(--color-danger);
+}
+
 /* Tab Views */
 .view-container {
   flex-grow: 1;
@@ -498,6 +510,52 @@ h1, h2, h3, .logo {
   color: var(--color-text-primary);
   outline: none;
   font-family: inherit;
+}
+
+.form-group select {
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border);
+  background-color: var(--color-bg);
+  color: var(--color-text-primary);
+  font: inherit;
+}
+
+.form-group small,
+.settings-actions span {
+  color: var(--color-text-secondary);
+}
+
+.checkbox-label {
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+  font-weight: 400 !important;
+}
+
+.checkbox-label input {
+  width: auto;
+}
+
+.settings-button {
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 10px 14px;
+  background: var(--color-surface-alt);
+  color: var(--color-text-primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.settings-button:hover {
+  background: var(--color-surface);
+}
+
+.table-message {
+  padding: 20px 24px !important;
+  color: var(--color-text-secondary) !important;
+  text-align: center;
 }
 
 /* Token Family Linkage Node Tree */

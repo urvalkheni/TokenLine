@@ -211,6 +211,10 @@ const elements = {{
 }};
 
 const sandbox = {{
+  sessionStorage: {{
+    getItem() {{ return null; }},
+    setItem() {{}}
+  }},
   document: {{
     addEventListener() {{}},
     querySelectorAll() {{ return []; }},
@@ -318,6 +322,10 @@ const elements = {{
 }};
 
 const sandbox = {{
+  sessionStorage: {{
+    getItem() {{ return null; }},
+    setItem() {{}}
+  }},
   document: {{
     addEventListener() {{}},
     querySelectorAll() {{ return []; }},
@@ -399,6 +407,10 @@ const elements = {{
 }};
 
 const sandbox = {{
+  sessionStorage: {{
+    getItem() {{ return null; }},
+    setItem() {{}}
+  }},
   document: {{
     addEventListener() {{}},
     querySelectorAll() {{ return []; }},
@@ -490,6 +502,10 @@ const elements = {{
 }};
 
 const sandbox = {{
+  sessionStorage: {{
+    getItem() {{ return null; }},
+    setItem() {{}}
+  }},
   document: {{
     addEventListener() {{}},
     querySelectorAll() {{ return []; }},
@@ -588,6 +604,10 @@ const elements = {{
 }};
 
 const sandbox = {{
+  sessionStorage: {{
+    getItem() {{ return null; }},
+    setItem() {{}}
+  }},
   document: {{
     addEventListener() {{}},
     querySelectorAll() {{ return []; }},
@@ -666,6 +686,10 @@ const tooltip = createMockElement('div');
 tooltip.id = 'globe-tooltip';
 
 const sandbox = {{
+  sessionStorage: {{
+    getItem() {{ return null; }},
+    setItem() {{}}
+  }},
   document: {{
     addEventListener() {{}},
     querySelectorAll() {{ return []; }},
