@@ -110,11 +110,11 @@ TokenLine reconstructs disconnected security events into a single, connected tok
 
 ## Supported Runtimes
 
-| Component | Language / Runtime | Minimum Version | Tested Versions |
+| Component | Language / Runtime | Supported Versions | CI Matrix |
 | :--- | :--- | :--- | :--- |
-| **Backend & Simulator** | Python | `3.12+` | Python 3.12, 3.13, 3.14 |
-| **Demo Application** | Node.js | `18.0.0+` | Node.js 18, 20, 22, 24 |
-| **Package Managers** | `pip` & `npm` | Standard | pip 24+, npm 9+ |
+| **Backend & Simulator** | Python | 3.12, 3.13, 3.14 | Python 3.12, 3.13, 3.14 |
+| **Demo Application** | Node.js | 22, 24, 26 (LTS) | Node.js 22, 24, 26 |
+| **Package Managers** | `pip` & `npm` | Bundled with runtimes | Runtime supplied versions |
 
 ---
 
@@ -124,7 +124,7 @@ Follow this guide to get all TokenLine components running from a clean checkout.
 
 ### 1. Prerequisites
 
-Ensure you have Python 3.12+ and Node.js 18+ installed on your system:
+Use Python 3.12, 3.13, or 3.14 and Node.js 22, 24, or 26 (LTS):
 ```bash
 python3 --version
 node --version
@@ -176,7 +176,7 @@ In a new terminal window:
 1. **Navigate to the demo app directory and install dependencies**:
    ```bash
    cd demo-app
-   npm install
+   npm ci
    ```
 
 2. **Configure demo app environment**:
@@ -278,6 +278,8 @@ The Python suite contains 170+ automated tests covering:
 - Alert model standard, deduplication, and classification evaluation ([`tests/unit/test_alert_standard_and_evaluation.py`](tests/unit/test_alert_standard_and_evaluation.py)).
 - Synthetic attack dataset generation and scenario reproducibility ([`tests/scenarios/test_synthetic_datasets.py`](tests/scenarios/test_synthetic_datasets.py)).
 - Frontend API endpoints and XSS prevention ([`tests/unit/test_frontend_api.py`](tests/unit/test_frontend_api.py), [`tests/unit/test_frontend_xss.py`](tests/unit/test_frontend_xss.py)).
+
+The CI workflow installs Python dependencies from `requirements.txt` in clean Python 3.12, 3.13, and 3.14 environments, checks the JSON event schema and Python syntax, runs Ruff and publishes coverage totals in the job log. A separate Node.js 22, 24, and 26 matrix runs `npm ci`, JavaScript syntax checks, and Jest from the committed lockfile.
 
 ### Demo Application Test Suite
 

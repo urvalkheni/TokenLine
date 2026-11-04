@@ -12,12 +12,12 @@ The application is built using Node.js, Express, and JSON Web Tokens (JWT). It f
 - Immediate cascade family revocation upon detecting refresh-token reuse.
 
 ## 3. Requirements
-- **Node.js**: `18.0.0+` (tested on Node.js 18, 20, 22, 24)
-- **npm**: `9.0.0+`
+- **Node.js**: `22.0.0+` (CI-tested on Node.js 22, 24, 26 LTS)
+- **npm**: Use the version bundled with Node.js 22, 24, or 26.
 
 ## 4. Installation
 ```bash
-npm install
+npm ci
 ```
 
 ## 5. Configuration
