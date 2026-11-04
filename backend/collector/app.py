@@ -2,7 +2,7 @@ import hmac
 import sys
 from functools import wraps
 from flask import Flask, request, jsonify, send_from_directory, current_app, has_app_context
-from werkzeug.exceptions import RequestEntityTooLarge
+from werkzeug.exceptions import HTTPException, RequestEntityTooLarge
 from sqlalchemy import inspect
 import json
 import os
@@ -279,42 +279,89 @@ def contains_raw_credentials(data):
 # Hard upper bound on pagination
 DEFAULT_PAGE_LIMIT = 100
 MAX_PAGE_LIMIT = 100
+MAX_PAGE_OFFSET = 1_000_000
+
+
+class ApiRequestError(ValueError):
+    """A safe, client-facing API input error."""
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+def parse_api_timestamp(name, value):
+    if not isinstance(value, str) or len(value) > 64:
+        raise ApiRequestError("invalid_time_range", f"{name} must be an ISO 8601 timestamp with a timezone")
+    try:
+        normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise ApiRequestError("invalid_time_range", f"{name} must be an ISO 8601 timestamp with a timezone") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ApiRequestError("invalid_time_range", f"{name} must include a timezone, such as Z or +00:00")
+    return parsed.astimezone(timezone.utc)
+
+
+def get_single_query_param(name):
+    values = request.args.getlist(name)
+    if len(values) > 1:
+        raise ApiRequestError("invalid_request", f"{name} may only be specified once")
+    return values[0] if values else None
 
 def get_pagination_params():
-    """
-    Extracts and validates pagination parameters.
-    - Enforces hard upper bound of MAX_PAGE_LIMIT (100).
-    - Safely handles negative limits by defaulting to DEFAULT_PAGE_LIMIT (100),
-      preventing unbounded queries and SQLite LIMIT -1 bypass.
-    - Safely handles non-numeric or missing limits.
-    - Sanitizes non-negative offset.
-    """
-    raw_limit = request.args.get("limit")
-    if raw_limit is None:
-        limit = DEFAULT_PAGE_LIMIT
-    else:
-        try:
-            val = int(raw_limit)
-            if val <= 0:
-                limit = DEFAULT_PAGE_LIMIT
-            elif val > MAX_PAGE_LIMIT:
-                limit = MAX_PAGE_LIMIT
-            else:
-                limit = val
-        except (ValueError, TypeError):
-            limit = DEFAULT_PAGE_LIMIT
+    """Parse bounded pagination values; reject malformed or duplicate parameters."""
+    raw_limit = get_single_query_param("limit")
+    raw_offset = get_single_query_param("offset")
 
-    raw_offset = request.args.get("offset")
-    if raw_offset is None:
-        offset = 0
-    else:
-        try:
-            val = int(raw_offset)
-            offset = max(0, val)
-        except (ValueError, TypeError):
-            offset = 0
+    def parse_integer(name, raw, default):
+        if raw is None:
+            return default
+        if not re.fullmatch(r"[0-9]+", raw):
+            raise ApiRequestError("invalid_pagination", f"{name} must be a non-negative integer")
+        return int(raw)
 
+    limit = parse_integer("limit", raw_limit, DEFAULT_PAGE_LIMIT)
+    offset = parse_integer("offset", raw_offset, 0)
+    if limit < 1 or limit > MAX_PAGE_LIMIT:
+        raise ApiRequestError("invalid_pagination", f"limit must be between 1 and {MAX_PAGE_LIMIT}")
+    if offset > MAX_PAGE_OFFSET:
+        raise ApiRequestError("invalid_pagination", f"offset must not exceed {MAX_PAGE_OFFSET}")
     return limit, offset
+
+
+def get_event_filter_params():
+    """Validate supported investigation filters for the event collection."""
+    filters = {}
+    raw_event_type = get_single_query_param("event_type")
+    if raw_event_type is not None:
+        valid_event_types = event_schema.get("properties", {}).get("event_type", {}).get("enum", []) if event_schema else []
+        if raw_event_type not in valid_event_types:
+            raise ApiRequestError("invalid_event_type", "event_type is not supported")
+        filters["event_type"] = raw_event_type
+
+    raw_token_hash = get_single_query_param("token_hash")
+    if raw_token_hash is not None:
+        if not validate_hash_structure(raw_token_hash):
+            raise ApiRequestError("invalid_token_hash", "token_hash must be a valid token hash")
+        filters["token_hash"] = raw_token_hash.strip()
+
+    raw_token_family = get_single_query_param("token_family")
+    if raw_token_family is not None:
+        token_family = raw_token_family.strip()
+        if not token_family or len(token_family) > 128 or any(ord(char) < 32 for char in token_family):
+            raise ApiRequestError("invalid_token_family", "token_family must contain 1 to 128 printable characters")
+        filters["token_family"] = token_family
+
+    raw_start = get_single_query_param("start_time")
+    raw_end = get_single_query_param("end_time")
+    if raw_start is not None:
+        filters["start_time"] = parse_api_timestamp("start_time", raw_start)
+    if raw_end is not None:
+        filters["end_time"] = parse_api_timestamp("end_time", raw_end)
+    if filters.get("start_time") and filters.get("end_time") and filters["start_time"] > filters["end_time"]:
+        raise ApiRequestError("invalid_time_range", "start_time must be earlier than or equal to end_time")
+    return filters
 
 # --- AUTHENTICATION & AUTHORIZATION ---
 
@@ -711,12 +758,51 @@ def create_app(test_config=None):
 
     @app.after_request
     def log_operational_request(response):
+        if response.status_code >= 400 and response.is_json:
+            payload = response.get_json(silent=True)
+            if isinstance(payload, dict) and "error" in payload:
+                code = payload.get("code") or (
+                    "internal_error" if response.status_code >= 500 else
+                    "unauthorized" if response.status_code == 401 else
+                    "forbidden" if response.status_code == 403 else
+                    "not_found" if response.status_code == 404 else
+                    "request_failed"
+                )
+                payload.setdefault("code", code)
+                payload.setdefault("message", payload["error"] if response.status_code < 500 else "The request could not be completed.")
+                response.set_data(app.json.dumps(payload))
         # Never log request paths, query strings, headers, or payloads; paths may contain IDs.
         logger.info(
             "request completed",
             extra={"operation": "http_request", "status_code": response.status_code},
         )
         return response
+
+    @app.errorhandler(ApiRequestError)
+    def handle_api_request_error(error):
+        return jsonify({
+            "error": "Invalid request",
+            "code": error.code,
+            "message": error.message,
+        }), 400
+
+    @app.errorhandler(Exception)
+    def handle_unexpected_error(error):
+        if isinstance(error, HTTPException):
+            return jsonify({
+                "error": error.name,
+                "code": f"http_{error.code}",
+                "message": error.description,
+            }), error.code
+        logger.error(
+            "request failed",
+            extra={"operation": "request_error", "error_type": type(error).__name__},
+        )
+        return jsonify({
+            "error": "Internal server error",
+            "code": "internal_error",
+            "message": "The request could not be completed.",
+        }), 500
 
     @app.before_request
     def check_request_size():
@@ -751,8 +837,8 @@ def create_app(test_config=None):
 
         try:
             data = request.get_json()
-        except Exception as e:
-            return jsonify({"error": f"Invalid JSON payload: {str(e)}"}), 400
+        except Exception:
+            return jsonify({"error": "Invalid JSON payload", "code": "invalid_json", "message": "Request body must contain valid JSON."}), 400
 
         # Ensure payload is a JSON object
         if not isinstance(data, dict):
@@ -773,11 +859,12 @@ def create_app(test_config=None):
         except ValidationError as ve:
             return jsonify({
                 "error": "Schema validation failed",
-                "message": ve.message,
+                "code": "schema_validation_failed",
+                "message": "Event does not match the required schema.",
                 "path": list(ve.path)
             }), 400
-        except Exception as e:
-            return jsonify({"error": f"Validation error: {str(e)}"}), 400
+        except Exception:
+            return jsonify({"error": "Validation error", "code": "validation_error", "message": "Event validation could not be completed."}), 400
 
         # Store event in the database within a single atomic transaction
         db_sess = get_session()
@@ -805,7 +892,8 @@ def create_app(test_config=None):
                 db_sess.rollback()
                 return jsonify({
                     "error": "Correlation error",
-                    "message": f"Correlation failed: {str(e)}"
+                    "code": "correlation_error",
+                    "message": "Event correlation could not be completed."
                 }), 500
 
             return jsonify({"status": "event persisted"}), 201
@@ -840,9 +928,22 @@ def create_app(test_config=None):
             return jsonify({}), 200
 
         limit, offset = get_pagination_params()
-        db = get_session()
+        filters = get_event_filter_params()
+        db = None
         try:
-            events = db.query(Event).order_by(Event.time.desc()).offset(offset).limit(limit).all()
+            db = get_session()
+            query = db.query(Event)
+            if "event_type" in filters:
+                query = query.filter(Event.event_type == filters["event_type"])
+            if "token_hash" in filters:
+                query = query.filter(Event.token_hash == filters["token_hash"])
+            if "token_family" in filters:
+                query = query.filter(Event.token_family == filters["token_family"])
+            if "start_time" in filters:
+                query = query.filter(Event.time >= filters["start_time"])
+            if "end_time" in filters:
+                query = query.filter(Event.time <= filters["end_time"])
+            events = query.order_by(Event.time.desc()).offset(offset).limit(limit).all()
             result = []
             for ev in events:
                 result.append({
@@ -866,9 +967,10 @@ def create_app(test_config=None):
             return jsonify(result), 200
         except Exception as e:
             logger.error("event query failed", extra={"operation": "event_query", "error_type": type(e).__name__})
-            return jsonify({"error": str(e)}), 500
+            return jsonify({"error": "Internal server error", "code": "internal_error", "message": "The request could not be completed."}), 500
         finally:
-            db.close()
+            if db is not None:
+                db.close()
 
     @app.route("/api/families", methods=["GET", "OPTIONS"])
     @require_auth({"read", "ingest", "admin"})
@@ -912,7 +1014,7 @@ def create_app(test_config=None):
             return jsonify(families_dict), 200
         except Exception as e:
             logger.error("token family query failed", extra={"operation": "family_query", "error_type": type(e).__name__})
-            return jsonify({"error": str(e)}), 500
+            return jsonify({"error": "Internal server error", "code": "internal_error", "message": "The request could not be completed."}), 500
         finally:
             db.close()
 
@@ -963,7 +1065,7 @@ def create_app(test_config=None):
             }), 200
         except Exception as e:
             logger.error("token family detail query failed", extra={"operation": "family_detail_query", "error_type": type(e).__name__})
-            return jsonify({"error": str(e)}), 500
+            return jsonify({"error": "Internal server error", "code": "internal_error", "message": "The request could not be completed."}), 500
         finally:
             db.close()
 
@@ -989,7 +1091,7 @@ def create_app(test_config=None):
             return jsonify(result), 200
         except Exception as e:
             logger.error("token reuse query failed", extra={"operation": "reuse_query", "error_type": type(e).__name__})
-            return jsonify({"error": str(e)}), 500
+            return jsonify({"error": "Internal server error", "code": "internal_error", "message": "The request could not be completed."}), 500
         finally:
             db.close()
 
@@ -1027,7 +1129,7 @@ def create_app(test_config=None):
             return jsonify(result), 200
         except Exception as e:
             logger.error("alert query failed", extra={"operation": "alert_query", "error_type": type(e).__name__})
-            return jsonify({"error": str(e)}), 500
+            return jsonify({"error": "Internal server error", "code": "internal_error", "message": "The request could not be completed."}), 500
         finally:
             db.close()
 
@@ -1048,7 +1150,7 @@ def create_app(test_config=None):
             return jsonify(alert.to_dict()), 200
         except Exception as e:
             logger.error("alert detail query failed", extra={"operation": "alert_detail_query", "error_type": type(e).__name__})
-            return jsonify({"error": str(e)}), 500
+            return jsonify({"error": "Internal server error", "code": "internal_error", "message": "The request could not be completed."}), 500
         finally:
             db.close()
 
@@ -1105,7 +1207,7 @@ def create_app(test_config=None):
         except Exception as e:
             db.rollback()
             logger.error("alert update failed", extra={"operation": "alert_update", "error_type": type(e).__name__})
-            return jsonify({"error": str(e)}), 500
+            return jsonify({"error": "Internal server error", "code": "internal_error", "message": "The request could not be completed."}), 500
         finally:
             db.close()
 
@@ -1166,7 +1268,7 @@ def create_app(test_config=None):
             events = nonlocal_run_scenario(scenario_name)
         except Exception as e:
             logger.error("scenario execution failed", extra={"operation": "scenario_run", "error_type": type(e).__name__})
-            return jsonify({"error": f"Failed to run scenario: {str(e)}"}), 400
+            return jsonify({"error": "Scenario execution failed", "code": "scenario_execution_failed", "message": "The scenario could not be completed."}), 400
 
         exec_id = f"exec-{uuid.uuid4().hex}"
         now_utc = datetime.now(timezone.utc)
@@ -1240,7 +1342,8 @@ def create_app(test_config=None):
             return jsonify({
                 "error": "Correlation error",
                 "execution_id": exec_id,
-                "message": f"Failed to persist and correlate scenario event: {str(e)}"
+                "code": "scenario_correlation_failed",
+                "message": "The scenario event could not be persisted and correlated."
             }), 500
         finally:
             db_sess.close()
