@@ -140,7 +140,7 @@ flowchart TD
 
 ### Prerequisites
 - Python 3.12+
-- Node.js 18+ (for demo-app)
+- Node.js 22, 24, or 26 (for demo-app; CI covers each supported LTS line)
 
 ### Step 1: Install Python Dependencies
 ```bash

@@ -6,5 +6,9 @@ tokenline.db
 test_collector.db
 .pytest_temp/
 .pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.ruff_cache/
 .venv/
 node_modules/
